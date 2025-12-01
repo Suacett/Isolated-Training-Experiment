@@ -26,3 +26,13 @@ legacy/
 .pytest_cache/
 .coverage
 htmlcov/
+
+
+legacy/
+.env
+__pycache__/
+frontend/.next/
+frontend/node_modules/
+backend/__pycache__/
+backend/venv/
+.git/
