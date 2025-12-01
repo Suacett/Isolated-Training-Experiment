@@ -11,9 +11,8 @@
 
 ## 2. Data Architecture
 - **Database:** PostgreSQL with TimescaleDB extension (running in Docker).
-- **Data Source:** Alpha Vantage (Free Tier).
-  - **Rate Limits:** STRICTLY enforce 5 calls/minute and 500 calls/day. Implement a queue/sleep system to prevent API bans.
-  - **Secrets:** API Keys must be loaded from `os.getenv("ALPHA_VANTAGE_KEY")`. NEVER commit keys.
+- **Data Source:** Alpaca Markets (Free Tier).
+  - **Secrets:** API Keys must be loaded from `Config` (via `config_loader.py`). NEVER commit keys.
 - **Stock List:** Refer to `stock_list.txt` or `stockList.csv` in the legacy files for the initial watchlist.
 
 ## 3. Refactoring Strategy
@@ -47,7 +46,7 @@
 
 **Phase 2: Data & Backend (Python/FastAPI)**
 - [ ] **Task 2.1:** Create `db_manager.py` with TimescaleDB schema for OHLCV data.
-- [ ] **Task 2.2:** Create `data_ingest.py` for Alpha Vantage (with rate limiting decorator).
+- [x] **Task 2.2:** Create `data_ingest.py` for Alpaca Markets (Stock & Crypto support).
 - [ ] **Task 2.3:** **Refactor Intrinsic Logic:** Port `1-produce_data.ipynb` to `IntrinsicValueCalculator` class.
 - [ ] **Task 2.4:** **Test Intrinsic Logic:** Verify output against `HistoricalPrices.csv`.
 - [ ] **Task 2.5:** **Refactor LSTM Logic:** Port `forecasting_backtest_Predictor.py` to `LSTMModel` class.

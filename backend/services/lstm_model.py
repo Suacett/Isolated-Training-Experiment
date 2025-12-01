@@ -2,95 +2,92 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-class MCDropout(nn.Dropout):
-    """
-    Monte Carlo Dropout layer.
-    Always applies dropout, even during evaluation, to estimate uncertainty.
-    """
-    def forward(self, input: torch.Tensor) -> torch.Tensor:
-        return F.dropout(input, self.p, True, self.inplace)
+def get_device():
+    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 class LSTMModel(nn.Module):
-    def __init__(
-        self, 
-        input_dim: int, 
-        window_size: int, 
-        conv_filters: int = 32, 
-        lstm_units: int = 64, 
-        dropout_rate: float = 0.3
-    ):
-        """
-        PyTorch implementation of the legacy Keras LSTM model.
-        
-        Architecture:
-        1. Conv1D
+    """
+    Strict port of the legacy Keras LSTM model.
+    Architecture:
+        1. Conv1D (32 filters, kernel=3, relu)
         2. BatchNorm
-        3. MC Dropout
-        4. LSTM
-        5. MC Dropout
-        6. Dense (ReLU)
-        7. Dense (Linear, 4 outputs)
-        """
+        3. MC Dropout (0.3)
+        4. LSTM (64 units)
+        5. MC Dropout (0.3)
+        6. Dense (32, relu)
+        7. Dense (4, linear)
+    """
+    def __init__(self, input_dim=39, hidden_dim=64, num_layers=1, output_dim=4, dropout=0.3, window_size=90):
         super(LSTMModel, self).__init__()
-        
         self.input_dim = input_dim
         self.window_size = window_size
         
-        # Conv1D: Input (Batch, Input_Dim, Seq_Len) -> Output (Batch, Filters, Seq_Len')
-        # Note: We will transpose input in forward() to match PyTorch convention
-        self.conv1 = nn.Conv1d(
-            in_channels=input_dim, 
-            out_channels=conv_filters, 
-            kernel_size=3, 
-            padding=1 # Same padding to keep length roughly similar if needed, or valid
-        )
+        # Conv1D: in_channels=input_dim, out_channels=32, kernel_size=3
+        self.conv1d = nn.Conv1d(in_channels=input_dim, out_channels=32, kernel_size=3)
+        self.bn = nn.BatchNorm1d(32)
         
-        self.bn1 = nn.BatchNorm1d(conv_filters)
-        self.dropout1 = MCDropout(dropout_rate)
+        # LSTM: input_size=32 (from Conv1D), hidden_size=64
+        self.lstm = nn.LSTM(input_size=32, hidden_size=hidden_dim, num_layers=num_layers, batch_first=True)
         
-        # LSTM: Input (Seq_Len, Batch, Input_Size) or (Batch, Seq_Len, Input_Size)
-        # We use batch_first=True
-        self.lstm = nn.LSTM(
-            input_size=conv_filters, 
-            hidden_size=lstm_units, 
-            batch_first=True
-        )
+        self.fc1 = nn.Linear(hidden_dim, 32)
+        self.fc2 = nn.Linear(32, output_dim)
         
-        self.dropout2 = MCDropout(dropout_rate)
-        
-        self.fc1 = nn.Linear(lstm_units, 32)
-        self.fc2 = nn.Linear(32, 4) # 4 Time horizons: 1d, 1w, 1m, 6m
+        self.dropout_p = dropout
+        self.relu = nn.ReLU()
 
     def forward(self, x):
-        # x shape: (Batch, Seq_Len, Input_Dim)
+        # x shape: (batch, seq_len, features)
+        # Conv1D expects (batch, channels, seq_len)
+        x = x.permute(0, 2, 1)
         
-        # PyTorch Conv1d expects (Batch, Channels, Length)
-        x = x.transpose(1, 2) # -> (Batch, Input_Dim, Seq_Len)
+        x = self.conv1d(x)
+        x = self.relu(x)
+        x = self.bn(x)
         
-        x = self.conv1(x)
-        x = F.relu(x)
-        x = self.bn1(x)
-        x = self.dropout1(x)
+        # Back to (batch, seq_len, features) for LSTM
+        x = x.permute(0, 2, 1)
         
-        # LSTM expects (Batch, Seq_Len, Features)
-        x = x.transpose(1, 2) # -> (Batch, Seq_Len, Filters)
+        # MC Dropout 1
+        x = F.dropout(x, p=self.dropout_p, training=True)
         
-        # LSTM output: output, (h_n, c_n)
-        # output shape: (Batch, Seq_Len, Hidden_Size)
-        # We only want the last time step
-        lstm_out, _ = self.lstm(x)
+        # LSTM
+        # out: (batch, seq_len, hidden_dim)
+        out, _ = self.lstm(x)
         
-        # Take last time step
-        last_step = lstm_out[:, -1, :]
+        # Take the last time step
+        out = out[:, -1, :]
         
-        x = self.dropout2(last_step)
-        x = F.relu(self.fc1(x))
-        x = self.fc2(x)
+        # MC Dropout 2
+        out = F.dropout(out, p=self.dropout_p, training=True)
         
-        return x
+        # Dense layers
+        out = self.fc1(out)
+        out = self.relu(out)
+        out = self.fc2(out)
+        
+        return out
 
-def get_device():
-    """Dynamic device detection as per project rules."""
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Running on {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU'}")
-    return device
+    def predict(self, x, device):
+        """
+        Helper for inference. Returns the 1-day forecast (index 0) for compatibility.
+        """
+        self.eval()
+        # Ensure x is on the correct device
+        x = x.to(device)
+        
+        # Add batch dimension if needed
+        if x.dim() == 2:
+            x = x.unsqueeze(0)
+            
+        with torch.no_grad():
+            # For MC Dropout, we technically should run multiple times and average,
+            # but for single point prediction in this strict port context, 
+            # we might just run it once or follow the legacy 'predict' behavior.
+            # Legacy code used `model.predict(X_val)` which in Keras usually turns off dropout 
+            # UNLESS `training=True` was passed in `call`.
+            # The legacy MCDropout class forced `training=True`.
+            # So we should keep dropout ON even in inference (which forward() does via F.dropout(..., training=True)).
+            output = self.forward(x)
+            
+        # Return the first output (1d forecast)
+        return output[0, 0].item()

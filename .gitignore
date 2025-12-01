@@ -1,6 +1,7 @@
 # Secrets
 .env
 .env.local
+backend/secrets.json
 
 # Dependencies
 node_modules/
@@ -36,3 +37,4 @@ frontend/node_modules/
 backend/__pycache__/
 backend/venv/
 .git/
+GEMINI.md/

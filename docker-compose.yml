@@ -20,7 +20,7 @@ services:
     restart: always
     environment:
       - ALPHA_VANTAGE_KEY=${ALPHA_VANTAGE_KEY}
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-password}@db:5432/stock_predictor
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-password}@db:5432/stock_predictor
     ports:
       - "8000:8000"
     depends_on:

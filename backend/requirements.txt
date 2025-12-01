@@ -9,3 +9,5 @@ scikit-learn
 python-dotenv
 requests
 asyncpg
+greenlet
+alpaca-py
