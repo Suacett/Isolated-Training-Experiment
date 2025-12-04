@@ -13,3 +13,4 @@ greenlet
 alpaca-py
 pytest
 httpx
+sec-edgar-downloader

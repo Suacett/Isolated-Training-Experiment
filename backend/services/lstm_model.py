@@ -50,7 +50,7 @@ class LSTMModel(nn.Module):
 
     def __init__(
         self,
-        input_dim: int = 5,  # OHLCV features
+        input_dim: int = 39,  # 39 features (technical indicators + alternative data)
         hidden_dim: int = 64,
         num_layers: int = 1,
         output_dim: int = 4,  # Multi-horizon: 1d, 1w, 1m, 6m

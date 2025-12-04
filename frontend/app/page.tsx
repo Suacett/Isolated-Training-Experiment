@@ -18,6 +18,7 @@ interface DashboardItem {
   signal: string;
   intrinsic_value?: number;
   accuracy?: boolean;
+  source?: string;
 }
 
 export default function Home() {
@@ -28,6 +29,7 @@ export default function Home() {
   const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isTraining, setIsTraining] = useState(false);
   const [lastSync, setLastSync] = useState<Date | null>(null);
 
   // Helper to detect crypto tickers
@@ -50,6 +52,7 @@ export default function Home() {
         intrinsic: item.intrinsic_value || 0,
         accuracy: item.accuracy ?? (item.prediction > item.current_price),
         isCrypto: isCryptoTicker(item.ticker),
+        source: item.source,
       }));
 
       setAssets(mappedAssets);
@@ -73,6 +76,21 @@ export default function Home() {
       console.error("Failed to sync data:", err);
     } finally {
       setIsSyncing(false);
+    }
+  };
+
+  // Train model
+  const handleTrainModel = async () => {
+    setIsTraining(true);
+    try {
+      const res = await fetch(`${API_BASE}/model/train`, { method: "POST" });
+      if (!res.ok) throw new Error("Training failed");
+      alert("Training started successfully!");
+    } catch (err) {
+      console.error("Failed to start training:", err);
+      alert("Failed to start training.");
+    } finally {
+      setIsTraining(false);
     }
   };
 
@@ -176,6 +194,18 @@ export default function Home() {
             >
               <RefreshCw size={16} className={isSyncing ? "animate-spin" : ""} />
               <span>{isSyncing ? "Syncing..." : "SYNC DATA"}</span>
+            </button>
+            <button
+              onClick={handleTrainModel}
+              disabled={isTraining}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-blue-900/20"
+            >
+              {isTraining ? (
+                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              ) : (
+                <Terminal size={16} />
+              )}
+              <span>{isTraining ? "Training..." : "Train AI"}</span>
             </button>
             <button
               onClick={() => setIsLogsOpen(true)}

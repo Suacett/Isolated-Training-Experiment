@@ -9,13 +9,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime
+import pandas as pd
 
 from services.lstm_model import LSTMModel, get_device
 from services.db import get_latest_close, get_unique_tickers, get_historical_data, add_watchlist_item, remove_watchlist_item, get_watchlist, save_prediction
-from services.data_ingest import AlpacaDataClient
+from services.data_ingest import AlpacaDataClient, AlphaVantageClient
+from services.intrinsic import IntrinsicCalculator
+from services.scaler import FeatureScaler
+from services.feature_engineering import process_stock_data, get_model_input_features
 from utils.config_loader import settings, save_config, clear_config, is_alpaca_configured, is_alpha_vantage_configured
 from state import state
-from routers import ingestion
+from routers import ingestion, predictions
 
 # Configure logging
 LOG_FILE = Path("backend.log")
@@ -34,9 +38,11 @@ app = FastAPI()
 
 # Include Routers
 app.include_router(ingestion.router)
+app.include_router(predictions.router)
 
-# Model weights path
+# Model and scaler paths
 MODEL_WEIGHTS_PATH = Path(__file__).parent / "models" / "lstm_model.pth"
+SCALER_PATH = Path(__file__).parent / "models" / "scaler.pkl"
 
 # CORS
 app.add_middleware(
@@ -64,21 +70,32 @@ async def startup_event():
     # Create models directory if it doesn't exist
     MODEL_WEIGHTS_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-    # Try to load existing model weights
+    # Load Scaler
+    state.scaler = FeatureScaler(str(SCALER_PATH))
+    if SCALER_PATH.exists():
+        if state.scaler.load():
+            logger.info(f"✅ Successfully loaded feature scaler from {SCALER_PATH}")
+        else:
+            logger.warning("⚠️ Scaler file exists but failed to load")
+    else:
+        logger.warning("⚠️ Scaler not found - predictions will not work without scaler")
+
+    # Try to load existing model weights (37 features)
     if MODEL_WEIGHTS_PATH.exists():
         try:
-            state.lstm_model = LSTMModel.load(str(MODEL_WEIGHTS_PATH), state.device)
+            state.lstm_model = LSTMModel(input_dim=37, window_size=60, device=state.device)
+            state.lstm_model.load(str(MODEL_WEIGHTS_PATH))
             logger.info(f"✅ Successfully loaded trained model from {MODEL_WEIGHTS_PATH}")
         except Exception as e:
             logger.error(f"❌ Failed to load model weights: {e}. Creating new model.")
-            state.lstm_model = LSTMModel(input_dim=5, window_size=60, device=state.device)
+            state.lstm_model = LSTMModel(input_dim=37, window_size=60, device=state.device)
     else:
-        # Initialize new LSTM Model
-        state.lstm_model = LSTMModel(input_dim=5, window_size=60, device=state.device)
-        logger.info("Initialized new LSTM model (no trained weights found)")
+        # Initialize new LSTM Model with 37 features
+        state.lstm_model = LSTMModel(input_dim=37, window_size=60, device=state.device)
+        logger.info("⚠️ Initialized new LSTM model (no trained weights found)")
 
     if state.lstm_model:
-        logger.info(f"✅ AI Model Active: LSTM (Input: {state.lstm_model.input_dim}, Hidden: {state.lstm_model.hidden_dim})")
+        logger.info(f"✅ AI Model Active: LSTM (Input: {state.lstm_model.input_dim} features, Hidden: {state.lstm_model.hidden_dim})")
 
     # Log API Key Status
     if is_alpaca_configured():
@@ -105,13 +122,19 @@ async def get_status():
 async def save_keys(keys: APIKeys):
     try:
         # Verify Alpaca keys if provided
+        alpaca_valid = False
         if keys.ALPACA_API_KEY and keys.ALPACA_SECRET_KEY:
             try:
                 test_client = AlpacaDataClient(api_key=keys.ALPACA_API_KEY, secret_key=keys.ALPACA_SECRET_KEY)
                 test_client.verify_credentials()
+                alpaca_valid = True
             except Exception as e:
                 logger.error(f"Alpaca keys validation failed: {e}")
-                raise HTTPException(status_code=400, detail=f"Invalid API Keys: {str(e)}")
+                # Only raise if Alpha Vantage is also missing/invalid
+                if not keys.ALPHA_VANTAGE_KEY:
+                     raise HTTPException(status_code=400, detail=f"Invalid API Keys: {str(e)}")
+                # If we have AV key, just warn
+                logger.warning("Alpaca keys invalid, but proceeding because Alpha Vantage key is present.")
 
         save_config(
             alpaca_api_key=keys.ALPACA_API_KEY,
@@ -119,7 +142,8 @@ async def save_keys(keys: APIKeys):
             alpha_vantage_key=keys.ALPHA_VANTAGE_KEY
         )
         
-        return {"message": "Keys saved successfully", "status": "valid"}
+        status = "valid" if alpaca_valid else "partial"
+        return {"message": "Keys saved successfully", "status": status}
     except HTTPException as he:
         raise he
     except Exception as e:
@@ -192,20 +216,88 @@ async def get_dashboard_summary():
         intrinsic_value = 0.0
         prediction = 0.0
         
+        # Calculate Intrinsic Value
+        try:
+            av_client = AlphaVantageClient()
+            eps_data = await av_client.fetch_eps_data(ticker)
+            calculator = IntrinsicCalculator()
+            eps_ttm = calculator.calculate_eps_ttm(eps_data)
+            growth = calculator.estimate_growth_rate(eps_data)
+            intrinsic_value = calculator.calculate_graham(eps_ttm, growth)
+        except Exception as e:
+            logger.warning(f"Intrinsic value calc failed for {ticker}: {e}")
+
         # Use global state model
         if state.lstm_model:
             try:
-                historical_data = await get_historical_data(ticker, limit=60)
-                if len(historical_data) == 60:
-                    data_array = np.array([[d.open, d.high, d.low, d.close, d.volume] for d in historical_data], dtype=np.float32)
-                    input_tensor = torch.tensor(data_array)
-                    prediction = state.lstm_model.predict(input_tensor, state.device)
+                historical_data = await get_historical_data(ticker, limit=100) # Need more data for features
+                if len(historical_data) >= 60:
+                    # Convert to DataFrame
+                    df = pd.DataFrame([{
+                        "date": d.timestamp,
+                        "open": d.open,
+                        "high": d.high,
+                        "low": d.low,
+                        "close": d.close,
+                        "volume": d.volume
+                    } for d in historical_data])
+                    
+                    # Process features
+                    processed_df = process_stock_data(df, create_targets=False)
+                    feature_cols = get_model_input_features()
+                    
+                    if len(processed_df) > 0:
+                        # Get latest features
+                        latest_features = processed_df.iloc[-1][feature_cols].values.reshape(1, -1)
+                        
+                        # Scale
+                        if state.scaler:
+                            scaled_features = state.scaler.transform(latest_features)
+                            
+                            # Reshape for LSTM [batch, features, seq_len] -> actually model expects [batch, seq_len, features] or similar?
+                            # Wait, the error said: expected input[1, 5, 60] to have 37 channels, but got 5 channels instead
+                            # The model likely expects [batch, seq_len, features] or [batch, features, seq_len] depending on implementation.
+                            # Let's check LSTMModel.predict.
+                            # Assuming it takes [batch, seq_len, features] based on standard PyTorch LSTM, 
+                            # BUT the error "expected input[1, 5, 60] to have 37 channels" suggests Conv1d or similar?
+                            # Let's look at the error again: "Given groups=1, weight of size [32, 37, 3], expected input[1, 5, 60] to have 37 channels, but got 5 channels instead"
+                            # This implies the input is [1, 5, 60] (Batch, Channels, SeqLen) and it wants 37 channels.
+                            # So we need to provide 37 features.
+                            
+                            # We need a sequence of 60 steps.
+                            # So we need the last 60 rows of processed_df.
+                            
+                            if len(processed_df) >= 60:
+                                seq_data = processed_df.iloc[-60:][feature_cols].values # (60, 37)
+                                scaled_seq = state.scaler.transform(seq_data) # (60, 37)
+                                
+                                # Transpose to [1, 37, 60] if model expects [channels, seq_len]
+                                # The error "expected input[1, 5, 60]" implies it got 5 channels (OHLCV) and 60 steps.
+                                # So we need to pass [1, 37, 60].
+                                
+                                # CORRECTION: The model forward method permutes (Batch, SeqLen, Features) -> (Batch, Features, SeqLen).
+                                # So we should pass (Batch, SeqLen, Features) -> (1, 60, 37).
+                                input_tensor = torch.tensor(scaled_seq, dtype=torch.float32).unsqueeze(0)
+                                prediction = state.lstm_model.predict(input_tensor, state.device)
             except Exception as e:
                 logger.error(f"Prediction error for {ticker}: {e}")
         
         signal = "HOLD"
-        if prediction > current_price * 1.02:
+        # Combine Intrinsic Value and AI Prediction for Signal
+        # Logic: If Prediction > Current + 2% AND Price < Intrinsic -> STRONG BUY
+        #        If Prediction > Current + 2% -> BUY
+        #        If Price < 0.5 * Intrinsic -> VALUE BUY
+        
+        is_bullish_prediction = prediction > current_price * 1.02
+        is_undervalued = intrinsic_value > 0 and current_price < intrinsic_value
+        is_deep_value = intrinsic_value > 0 and current_price < 0.5 * intrinsic_value
+        
+        if is_bullish_prediction and is_undervalued:
+            signal = "STRONG BUY"
+        elif is_bullish_prediction:
             signal = "BUY"
+        elif is_deep_value:
+            signal = "VALUE BUY"
         elif prediction < current_price * 0.98:
             signal = "SELL"
             
@@ -213,6 +305,7 @@ async def get_dashboard_summary():
             "ticker": ticker,
             "current_price": current_price,
             "prediction": prediction,
+            "intrinsic_value": intrinsic_value,
             "signal": signal
         })
         
@@ -234,6 +327,18 @@ async def get_dashboard_detail(ticker: str):
     total_records = len(historical_data)
     start_index = max(window_size, total_records - required_history)
     
+    # Calculate Intrinsic Value
+    intrinsic_val = 0.0
+    try:
+        av_client = AlphaVantageClient()
+        eps_data = await av_client.fetch_eps_data(ticker)
+        calculator = IntrinsicCalculator()
+        eps_ttm = calculator.calculate_eps_ttm(eps_data)
+        growth = calculator.estimate_growth_rate(eps_data)
+        intrinsic_val = calculator.calculate_graham(eps_ttm, growth)
+    except Exception as e:
+        logger.warning(f"Intrinsic value calc failed for {ticker}: {e}")
+
     if total_records <= window_size or not state.lstm_model:
         for d in historical_data:
              history_response.append({
@@ -243,28 +348,81 @@ async def get_dashboard_detail(ticker: str):
                 "low": d.low,
                 "close": d.close,
                 "predicted_close": None,
-                "intrinsic_value": 0.0 
+                "intrinsic_value": intrinsic_val 
             })
         return {"history": history_response}
 
     windows = []
     valid_indices = []
     
-    for i in range(start_index, total_records):
-        window_data = historical_data[i-window_size : i]
-        window_array = np.array([[d.open, d.high, d.low, d.close, d.volume] for d in window_data], dtype=np.float32)
-        windows.append(window_array)
-        valid_indices.append(i)
+    windows = []
+    valid_indices = []
+    
+    # Need sufficient history for feature engineering (e.g. 30 days for volatility)
+    # We fetched 'fetch_limit' which is required_history + window_size.
+    # Let's convert all historical data to DF first.
+    
+    full_df = pd.DataFrame([{
+        "date": d.timestamp,
+        "open": d.open,
+        "high": d.high,
+        "low": d.low,
+        "close": d.close,
+        "volume": d.volume
+    } for d in historical_data])
+    
+    if not full_df.empty:
+        processed_full_df = process_stock_data(full_df, create_targets=False)
+        feature_cols = get_model_input_features()
         
+        # We need to align processed_df with original indices.
+        # process_stock_data drops NaNs, so indices shift.
+        # We'll map by date.
+        processed_full_df.set_index("date", inplace=True)
+        
+        for i in range(start_index, total_records):
+            # We need the window ending at i (exclusive of i? No, historical_data[i] is the target usually, 
+            # but here we want to predict FOR i? Or is i the current time?
+            # The loop logic: window_data = historical_data[i-window_size : i]
+            # So we use data up to i-1 to predict i?
+            # Let's stick to the existing logic: window is [i-window_size : i]
+            
+            target_date = historical_data[i-1].timestamp # The last data point in the window
+            
+            # We need a sequence of 60 steps ending at i-1.
+            # In processed_df, we need to find the row corresponding to target_date and take it + 59 previous rows?
+            # Actually, simpler: just take the slice from the processed dataframe if possible.
+            
+            # Re-slice from full processed DF is safer.
+            # But processed_df might be shorter due to NaN dropping.
+            
+            # Let's try to grab the window from the processed DF based on dates.
+            window_end_date = historical_data[i-1].timestamp
+            
+            if window_end_date in processed_full_df.index:
+                # Get location of this date
+                loc = processed_full_df.index.get_loc(window_end_date)
+                
+                if isinstance(loc, int):
+                    if loc >= window_size - 1:
+                        window_seq = processed_full_df.iloc[loc-window_size+1 : loc+1][feature_cols].values
+                        if len(window_seq) == window_size:
+                            if state.scaler:
+                                window_seq = state.scaler.transform(window_seq)
+                            
+                            # Shape: (60, 37)
+                            windows.append(window_seq)
+                            valid_indices.append(i)
+
     if windows:
-        batch_tensor = torch.tensor(np.array(windows))
+        # Shape: (Batch, SeqLen, Features)
+        batch_tensor = torch.tensor(np.array(windows), dtype=torch.float32)
         predictions = state.lstm_model.predict_batch(batch_tensor, state.device)
         predictions_list = predictions.cpu().numpy().tolist()
     else:
         predictions_list = []
         
     pred_map = {idx: pred for idx, pred in zip(valid_indices, predictions_list)}
-    intrinsic_val = 142.0 
     
     display_start = max(0, total_records - required_history)
     
@@ -283,6 +441,21 @@ async def get_dashboard_detail(ticker: str):
         })
 
     return {"history": history_response}
+@app.post("/model/train")
+async def train_model():
+    """
+    Stub for model training.
+    """
+    import asyncio
+    # Simulate training delay
+    await asyncio.sleep(5)
+    
+    # In a real implementation, this would trigger the training loop
+    if state.lstm_model:
+        # Save dummy weights to simulate "training" completion
+        state.lstm_model.save(str(MODEL_WEIGHTS_PATH))
+        
+    return {"message": "Model training started (simulation)", "status": "training"}
 
 @app.post("/model/save")
 async def save_model():

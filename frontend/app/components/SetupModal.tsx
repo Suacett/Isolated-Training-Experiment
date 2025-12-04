@@ -1,7 +1,5 @@
-"use client";
-
-import { useState } from "react";
-import { X } from "lucide-react";
+import { useState, useEffect } from "react";
+import { X, CheckCircle2, XCircle } from "lucide-react";
 
 type DataSource = "alpaca" | "alpha_vantage";
 
@@ -18,6 +16,19 @@ export default function SetupModal({ onClose }: SetupModalProps) {
     const [resetting, setResetting] = useState(false);
     const [status, setStatus] = useState<"idle" | "success" | "error">("idle");
     const [message, setMessage] = useState("");
+    const [keyStatus, setKeyStatus] = useState({ alpaca: false, alpha_vantage: false });
+
+    useEffect(() => {
+        fetch("http://localhost:8000/status")
+            .then(res => res.json())
+            .then(data => {
+                setKeyStatus({
+                    alpaca: data.alpaca_configured,
+                    alpha_vantage: data.alpha_vantage_configured
+                });
+            })
+            .catch(console.error);
+    }, []);
 
     const isFormValid = () => {
         if (dataSource === "alpaca") {
@@ -60,6 +71,10 @@ export default function SetupModal({ onClose }: SetupModalProps) {
             if (res.ok) {
                 setStatus("success");
                 setMessage("Configuration saved successfully!");
+                // Update status locally
+                if (dataSource === "alpaca") setKeyStatus(prev => ({ ...prev, alpaca: true }));
+                else setKeyStatus(prev => ({ ...prev, alpha_vantage: true }));
+
                 setTimeout(() => {
                     if (onClose) {
                         onClose();
@@ -101,22 +116,24 @@ export default function SetupModal({ onClose }: SetupModalProps) {
                     <button
                         type="button"
                         onClick={() => setDataSource("alpaca")}
-                        className={`flex-1 py-2 px-4 rounded-lg border transition-colors ${dataSource === "alpaca"
+                        className={`flex-1 py-2 px-4 rounded-lg border transition-colors flex items-center justify-center gap-2 ${dataSource === "alpaca"
                             ? "bg-emerald-600 border-emerald-500 text-white"
                             : "bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-600"
                             }`}
                     >
                         Alpaca Markets
+                        {keyStatus.alpaca ? <CheckCircle2 size={16} className="text-white" /> : null}
                     </button>
                     <button
                         type="button"
                         onClick={() => setDataSource("alpha_vantage")}
-                        className={`flex-1 py-2 px-4 rounded-lg border transition-colors ${dataSource === "alpha_vantage"
+                        className={`flex-1 py-2 px-4 rounded-lg border transition-colors flex items-center justify-center gap-2 ${dataSource === "alpha_vantage"
                             ? "bg-emerald-600 border-emerald-500 text-white"
                             : "bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-600"
                             }`}
                     >
                         Alpha Vantage
+                        {keyStatus.alpha_vantage ? <CheckCircle2 size={16} className="text-white" /> : null}
                     </button>
                 </div>
 
@@ -124,9 +141,20 @@ export default function SetupModal({ onClose }: SetupModalProps) {
                     {dataSource === "alpaca" ? (
                         <>
                             <div>
-                                <label className="block text-sm font-medium text-gray-400 mb-1">
-                                    Alpaca Key ID
-                                </label>
+                                <div className="flex items-center justify-between mb-1">
+                                    <label className="block text-sm font-medium text-gray-400">
+                                        Alpaca Key ID
+                                    </label>
+                                    {keyStatus.alpaca ? (
+                                        <span className="text-xs text-emerald-500 flex items-center gap-1">
+                                            <CheckCircle2 size={12} /> Active
+                                        </span>
+                                    ) : (
+                                        <span className="text-xs text-red-500 flex items-center gap-1">
+                                            <XCircle size={12} /> Not Configured
+                                        </span>
+                                    )}
+                                </div>
                                 <input
                                     type="text"
                                     value={alpacaApiKey}
@@ -164,9 +192,20 @@ export default function SetupModal({ onClose }: SetupModalProps) {
                     ) : (
                         <>
                             <div>
-                                <label className="block text-sm font-medium text-gray-400 mb-1">
-                                    Alpha Vantage API Key
-                                </label>
+                                <div className="flex items-center justify-between mb-1">
+                                    <label className="block text-sm font-medium text-gray-400">
+                                        Alpha Vantage API Key
+                                    </label>
+                                    {keyStatus.alpha_vantage ? (
+                                        <span className="text-xs text-emerald-500 flex items-center gap-1">
+                                            <CheckCircle2 size={12} /> Active
+                                        </span>
+                                    ) : (
+                                        <span className="text-xs text-red-500 flex items-center gap-1">
+                                            <XCircle size={12} /> Not Configured
+                                        </span>
+                                    )}
+                                </div>
                                 <input
                                     type="text"
                                     value={alphaVantageKey}

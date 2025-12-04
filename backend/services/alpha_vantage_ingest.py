@@ -45,7 +45,8 @@ class AlphaVantageClient:
             "function": "TIME_SERIES_DAILY",
             "symbol": ticker,
             "apikey": self.api_key,
-            "outputsize": "full"  # Get full history
+            "apikey": self.api_key,
+            "outputsize": "compact"  # Get compact history (100 days) for free tier
         }
 
         try:

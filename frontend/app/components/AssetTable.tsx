@@ -15,6 +15,7 @@ export interface Asset {
     intrinsic: number;
     accuracy: boolean; // true = green dot, false = red dot
     isCrypto: boolean;
+    source?: string;
 }
 
 interface AssetTableProps {
@@ -47,7 +48,14 @@ export default function AssetTable({ assets, onSelect }: AssetTableProps) {
                                 {asset.ticker}
                             </td>
                             <td className="px-6 py-4 text-right font-mono text-zinc-300">
-                                ${asset.price.toFixed(2)}
+                                <div className="flex flex-col items-end">
+                                    <span>${asset.price.toFixed(2)}</span>
+                                    {asset.source && (
+                                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-500">
+                                            {asset.source}
+                                        </span>
+                                    )}
+                                </div>
                             </td>
                             <td className="px-6 py-4 text-right font-mono">
                                 <span
