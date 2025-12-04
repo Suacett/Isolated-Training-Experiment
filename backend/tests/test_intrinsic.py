@@ -1,7 +1,7 @@
 import pytest
 import pandas as pd
 import numpy as np
-from backend.services.intrinsic import IntrinsicCalculator
+from services.intrinsic import IntrinsicCalculator
 
 
 @pytest.fixture

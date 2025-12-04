@@ -6,21 +6,21 @@ import torch
 import numpy as np
 
 # Need to import app after mocking potentially, or patch where it's used
-from backend.main import app
+from main import app
 
 client = TestClient(app)
 
 # Mock DB functions
 @pytest.fixture
 def mock_db_functions():
-    with patch("backend.main.get_latest_close", new_callable=AsyncMock) as mock_close, \
-         patch("backend.main.get_historical_data", new_callable=AsyncMock) as mock_hist:
+    with patch("main.get_latest_close", new_callable=AsyncMock) as mock_close, \
+         patch("main.get_historical_data", new_callable=AsyncMock) as mock_hist:
         yield mock_close, mock_hist
 
 # Mock LSTM Model
 @pytest.fixture
 def mock_lstm():
-    with patch("backend.main.lstm_model") as mock:
+    with patch("main.lstm_model") as mock:
         mock.predict_batch = MagicMock()
         yield mock
 

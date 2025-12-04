@@ -1,22 +1,50 @@
 import asyncio
+import os
 from datetime import datetime
 from sqlalchemy.dialects.postgresql import insert
 from services.db import StockPrice, AsyncSessionLocal
-from utils.config_loader import Config
+from utils.config_loader import settings
 from alpaca.data.historical import StockHistoricalDataClient, CryptoHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest, CryptoBarsRequest
 from alpaca.data.timeframe import TimeFrame
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 class AlpacaDataClient:
-    def __init__(self):
-        self.api_key = Config.ALPACA_API_KEY
-        self.secret_key = Config.ALPACA_SECRET_KEY
+    def __init__(self, api_key: str = None, secret_key: str = None):
+        self.api_key = api_key or settings.ALPACA_API_KEY
+        self.secret_key = secret_key or settings.ALPACA_SECRET_KEY
+        self.base_url = os.getenv("ALPACA_BASE_URL", "https://paper-api.alpaca.markets")
+        
+        logger.info(f"🔌 Connecting to Alpaca via: {self.base_url}")
         
         if not self.api_key or not self.secret_key:
-            raise ValueError("Alpaca credentials not found in Config")
+            raise ValueError("Alpaca credentials not found in settings")
 
-        self.stock_client = StockHistoricalDataClient(self.api_key, self.secret_key)
-        self.crypto_client = CryptoHistoricalDataClient(self.api_key, self.secret_key)
+        self.stock_client = StockHistoricalDataClient(self.api_key, self.secret_key, url_override=self.base_url)
+        self.crypto_client = CryptoHistoricalDataClient(self.api_key, self.secret_key, url_override=self.base_url)
+
+    def verify_credentials(self):
+        """
+        Simple check to verify credentials.
+        """
+        try:
+            # Try to fetch 1 bar of AAPL to verify keys
+            request_params = StockBarsRequest(
+                symbol_or_symbols=["AAPL"],
+                timeframe=TimeFrame.Day,
+                start=datetime(2023, 1, 1),
+                limit=1
+            )
+            self.stock_client.get_stock_bars(request_params)
+            return True
+        except Exception as e:
+            error_msg = str(e)
+            if "401" in error_msg or "403" in error_msg:
+                logger.error("❌ API AUTHENTICATION FAILED during verification.")
+            raise e
 
     def is_crypto(self, ticker: str) -> bool:
         """
@@ -91,7 +119,15 @@ class AlpacaDataClient:
                 print(f"Successfully saved {len(stock_prices)} records for {ticker}")
 
         except Exception as e:
-            print(f"Exception occurred while fetching/saving data for {ticker}: {e}")
+            error_msg = str(e)
+            if "401" in error_msg or "403" in error_msg:
+                msg = "❌ API AUTHENTICATION FAILED. Please check your API Keys."
+                print(msg)
+                logger.error(msg)
+                raise Exception(msg)
+            else:
+                print(f"Exception occurred while fetching/saving data for {ticker}: {e}")
+                raise e
 
     async def fetch_all_data(self, tickers: list[str]):
         """
@@ -129,7 +165,15 @@ class AlpacaDataClient:
                     else:
                         print(f"No data found for {ticker}")
             except Exception as e:
-                print(f"Error fetching stocks batch: {e}")
+                error_msg = str(e)
+                if "401" in error_msg or "403" in error_msg:
+                    msg = "❌ API AUTHENTICATION FAILED. Please check your API Keys."
+                    print(msg)
+                    logger.error(msg)
+                    raise Exception(msg)
+                else:
+                    print(f"Error fetching stocks batch: {e}")
+                    raise e
                 
         # 2. Process Crypto (Batch if possible, but let's try batch)
         if cryptos:
@@ -149,7 +193,15 @@ class AlpacaDataClient:
                     else:
                         print(f"No data found for {ticker}")
             except Exception as e:
-                print(f"Error fetching crypto batch: {e}")
+                error_msg = str(e)
+                if "401" in error_msg or "403" in error_msg:
+                    msg = "❌ API AUTHENTICATION FAILED. Please check your API Keys."
+                    print(msg)
+                    logger.error(msg)
+                    raise Exception(msg)
+                else:
+                    print(f"Error fetching crypto batch: {e}")
+                    raise e
 
     async def _save_bars(self, ticker: str, bars):
         if not bars:

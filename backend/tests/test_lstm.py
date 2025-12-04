@@ -1,6 +1,6 @@
 import pytest
 import torch
-from backend.services.lstm_model import LSTMModel, get_device
+from services.lstm_model import LSTMModel, get_device
 
 
 def test_lstm_initialization_and_forward_pass(capsys):

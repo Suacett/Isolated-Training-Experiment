@@ -1,8 +1,11 @@
 import json
 import os
 from typing import Optional, Dict
+from dotenv import load_dotenv
 
-SECRETS_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "secrets.json")
+load_dotenv()
+
+SECRETS_FILE = os.path.abspath(os.path.join(os.path.dirname(os.path.dirname(__file__)), "secrets.json"))
 
 
 def load_config() -> Optional[Dict[str, str]]:
@@ -45,6 +48,14 @@ def save_config(
         json.dump(existing, f, indent=4)
 
 
+def clear_config():
+    """
+    Clears all API keys from backend/secrets.json.
+    """
+    with open(SECRETS_FILE, "w") as f:
+        json.dump({}, f, indent=4)
+
+
 def is_alpaca_configured() -> bool:
     """Check if Alpaca credentials are configured."""
     config = load_config() or {}
@@ -57,26 +68,26 @@ def is_alpha_vantage_configured() -> bool:
     return bool(config.get("ALPHA_VANTAGE_KEY"))
 
 
-class _Config:
+class Settings:
     """
-    Config class providing property access to API keys.
+    Settings class providing property access to API keys.
     Supports both Alpaca and Alpha Vantage.
     """
 
     @property
     def ALPACA_API_KEY(self) -> Optional[str]:
         config = load_config() or {}
-        return config.get("ALPACA_API_KEY")
+        return config.get("ALPACA_API_KEY") or os.getenv("ALPACA_API_KEY")
 
     @property
     def ALPACA_SECRET_KEY(self) -> Optional[str]:
         config = load_config() or {}
-        return config.get("ALPACA_SECRET_KEY")
+        return config.get("ALPACA_SECRET_KEY") or os.getenv("ALPACA_SECRET_KEY")
 
     @property
     def ALPHA_VANTAGE_KEY(self) -> Optional[str]:
         config = load_config() or {}
-        return config.get("ALPHA_VANTAGE_KEY")
+        return config.get("ALPHA_VANTAGE_KEY") or os.getenv("ALPHA_VANTAGE_KEY")
 
 
-Config = _Config()
+settings = Settings()

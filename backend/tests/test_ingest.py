@@ -7,19 +7,19 @@ import asyncio
 # Add project root to sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
 
-from backend.services.alpha_vantage_ingest import AlphaVantageClient
+from services.alpha_vantage_ingest import AlphaVantageClient
 
 class TestAlphaVantageClient(unittest.TestCase):
     def setUp(self):
         os.environ["ALPHA_VANTAGE_KEY"] = "test_key"
 
-    @patch("backend.services.alpha_vantage_ingest.Config")
-    @patch("backend.services.alpha_vantage_ingest.requests.get")
-    @patch("backend.services.alpha_vantage_ingest.time.sleep")
-    @patch("backend.services.alpha_vantage_ingest.AsyncSessionLocal")
-    def test_fetch_daily_data(self, mock_session, mock_sleep, mock_get, mock_config):
-        # Mock Config to return test API key
-        mock_config.ALPHA_VANTAGE_KEY = "test_key"
+    @patch("services.alpha_vantage_ingest.settings")
+    @patch("services.alpha_vantage_ingest.requests.get")
+    @patch("services.alpha_vantage_ingest.time.sleep")
+    @patch("services.alpha_vantage_ingest.AsyncSessionLocal")
+    def test_fetch_daily_data(self, mock_session, mock_sleep, mock_get, mock_settings):
+        # Mock settings to return test API key
+        mock_settings.ALPHA_VANTAGE_KEY = "test_key"
 
         # Mock API response
         mock_response = MagicMock()

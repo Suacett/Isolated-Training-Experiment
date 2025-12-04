@@ -10,8 +10,8 @@ import requests
 from datetime import datetime
 from typing import List, Optional
 from sqlalchemy.dialects.postgresql import insert
-from backend.services.db import StockPrice, AsyncSessionLocal
-from backend.utils.config_loader import Config
+from services.db import StockPrice, AsyncSessionLocal
+from utils.config_loader import settings
 
 
 class AlphaVantageClient:
@@ -27,10 +27,10 @@ class AlphaVantageClient:
     RATE_LIMIT_DELAY = 15  # Seconds between calls (conservative for free tier)
 
     def __init__(self):
-        self.api_key = Config.ALPHA_VANTAGE_KEY
+        self.api_key = settings.ALPHA_VANTAGE_KEY
 
         if not self.api_key:
-            raise ValueError("Alpha Vantage API key not found in Config")
+            raise ValueError("Alpha Vantage API key not found in settings")
 
     async def fetch_daily_data(self, ticker: str) -> None:
         """

@@ -1,24 +1,24 @@
 import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import AsyncMock, MagicMock, patch
-from backend.main import app, get_watchlist, add_watchlist_item, remove_watchlist_item
+from main import app, get_watchlist, add_watchlist_item, remove_watchlist_item
 
 client = TestClient(app)
 
 # Mock DB functions
 @pytest.fixture
 def mock_db_functions():
-    with patch("backend.main.add_watchlist_item", new_callable=AsyncMock) as mock_add, \
-         patch("backend.main.remove_watchlist_item", new_callable=AsyncMock) as mock_remove, \
-         patch("backend.main.get_watchlist", new_callable=AsyncMock) as mock_get, \
-         patch("backend.main.get_latest_close", new_callable=AsyncMock) as mock_close, \
-         patch("backend.main.get_historical_data", new_callable=AsyncMock) as mock_hist:
+    with patch("main.add_watchlist_item", new_callable=AsyncMock) as mock_add, \
+         patch("main.remove_watchlist_item", new_callable=AsyncMock) as mock_remove, \
+         patch("main.get_watchlist", new_callable=AsyncMock) as mock_get, \
+         patch("main.get_latest_close", new_callable=AsyncMock) as mock_close, \
+         patch("main.get_historical_data", new_callable=AsyncMock) as mock_hist:
         yield mock_add, mock_remove, mock_get, mock_close, mock_hist
 
 # Mock Alpaca Client
 @pytest.fixture
 def mock_alpaca():
-    with patch("backend.main.alpaca_client") as mock:
+    with patch("main.alpaca_client") as mock:
         mock.fetch_data = AsyncMock()
         yield mock
 

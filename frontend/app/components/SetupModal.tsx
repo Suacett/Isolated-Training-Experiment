@@ -1,19 +1,39 @@
 "use client";
 
 import { useState } from "react";
+import { X } from "lucide-react";
 
 type DataSource = "alpaca" | "alpha_vantage";
 
-export default function SetupModal() {
+interface SetupModalProps {
+    onClose?: () => void;
+}
+
+export default function SetupModal({ onClose }: SetupModalProps) {
     const [dataSource, setDataSource] = useState<DataSource>("alpaca");
     const [alpacaApiKey, setAlpacaApiKey] = useState("");
     const [alpacaSecretKey, setAlpacaSecretKey] = useState("");
     const [alphaVantageKey, setAlphaVantageKey] = useState("");
     const [loading, setLoading] = useState(false);
+    const [resetting, setResetting] = useState(false);
+    const [status, setStatus] = useState<"idle" | "success" | "error">("idle");
+    const [message, setMessage] = useState("");
+
+    const isFormValid = () => {
+        if (dataSource === "alpaca") {
+            return alpacaApiKey.trim() !== "" && alpacaSecretKey.trim() !== "";
+        } else {
+            return alphaVantageKey.trim() !== "";
+        }
+    };
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+        if (!isFormValid()) return;
+
         setLoading(true);
+        setStatus("idle");
+        setMessage("");
 
         try {
             const payload: Record<string, string | null> = {
@@ -38,13 +58,21 @@ export default function SetupModal() {
             });
 
             if (res.ok) {
-                window.location.reload();
+                setStatus("success");
+                setMessage("Configuration saved successfully!");
+                setTimeout(() => {
+                    if (onClose) {
+                        onClose();
+                    }
+                }, 1500);
             } else {
-                alert("Failed to save keys");
+                setStatus("error");
+                setMessage("Failed to save keys. Please check your input.");
             }
         } catch (error) {
             console.error(error);
-            alert("Error saving keys");
+            setStatus("error");
+            setMessage("Network error occurred.");
         } finally {
             setLoading(false);
         }
@@ -52,9 +80,17 @@ export default function SetupModal() {
 
     return (
         <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-80 z-50">
-            <div className="bg-gray-900 border border-gray-700 p-8 rounded-xl shadow-2xl max-w-md w-full">
+            <div className="bg-gray-900 border border-gray-700 p-8 rounded-xl shadow-2xl max-w-md w-full relative">
+                {onClose && (
+                    <button
+                        onClick={onClose}
+                        className="absolute top-4 right-4 text-gray-400 hover:text-white transition-colors"
+                    >
+                        <X size={24} />
+                    </button>
+                )}
                 <h2 className="text-2xl font-bold text-white mb-4 text-center">
-                    Welcome
+                    {onClose ? "Settings" : "Welcome"}
                 </h2>
                 <p className="text-gray-400 mb-6 text-center">
                     Configure your data source to begin.
@@ -65,22 +101,20 @@ export default function SetupModal() {
                     <button
                         type="button"
                         onClick={() => setDataSource("alpaca")}
-                        className={`flex-1 py-2 px-4 rounded-lg border transition-colors ${
-                            dataSource === "alpaca"
-                                ? "bg-emerald-600 border-emerald-500 text-white"
-                                : "bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-600"
-                        }`}
+                        className={`flex-1 py-2 px-4 rounded-lg border transition-colors ${dataSource === "alpaca"
+                            ? "bg-emerald-600 border-emerald-500 text-white"
+                            : "bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-600"
+                            }`}
                     >
                         Alpaca Markets
                     </button>
                     <button
                         type="button"
                         onClick={() => setDataSource("alpha_vantage")}
-                        className={`flex-1 py-2 px-4 rounded-lg border transition-colors ${
-                            dataSource === "alpha_vantage"
-                                ? "bg-emerald-600 border-emerald-500 text-white"
-                                : "bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-600"
-                        }`}
+                        className={`flex-1 py-2 px-4 rounded-lg border transition-colors ${dataSource === "alpha_vantage"
+                            ? "bg-emerald-600 border-emerald-500 text-white"
+                            : "bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-600"
+                            }`}
                     >
                         Alpha Vantage
                     </button>
@@ -91,7 +125,7 @@ export default function SetupModal() {
                         <>
                             <div>
                                 <label className="block text-sm font-medium text-gray-400 mb-1">
-                                    Alpaca API Key
+                                    Alpaca Key ID
                                 </label>
                                 <input
                                     type="text"
@@ -157,13 +191,69 @@ export default function SetupModal() {
                         </>
                     )}
 
-                    <button
-                        type="submit"
-                        disabled={loading}
-                        className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 rounded-lg transition-colors disabled:opacity-50"
-                    >
-                        {loading ? "Saving..." : "Start Trading"}
-                    </button>
+                    {status === "error" && (
+                        <div className="text-red-500 text-sm text-center bg-red-500/10 p-2 rounded">
+                            {message}
+                        </div>
+                    )}
+
+                    {status === "success" && (
+                        <div className="text-emerald-500 text-sm text-center bg-emerald-500/10 p-2 rounded">
+                            {message}
+                        </div>
+                    )}
+
+                    <div className="flex flex-col gap-3">
+                        <button
+                            type="submit"
+                            disabled={loading || resetting || !isFormValid()}
+                            className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                        >
+                            {loading && <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                            {loading ? "Saving..." : "Save Settings"}
+                        </button>
+
+                        <button
+                            type="button"
+                            onClick={async () => {
+                                if (!confirm("Are you sure you want to reset all API keys? This cannot be undone.")) return;
+                                setResetting(true);
+                                setStatus("idle");
+                                setMessage("");
+
+                                try {
+                                    const res = await fetch("http://localhost:8000/settings/keys", {
+                                        method: "DELETE",
+                                    });
+                                    if (res.ok) {
+                                        setAlpacaApiKey("");
+                                        setAlpacaSecretKey("");
+                                        setAlphaVantageKey("");
+                                        setStatus("success");
+                                        setMessage("Keys Reset");
+                                        setTimeout(() => {
+                                            if (onClose) onClose();
+                                            else window.location.reload();
+                                        }, 1500);
+                                    } else {
+                                        setStatus("error");
+                                        setMessage("Failed to reset keys.");
+                                    }
+                                } catch (error) {
+                                    console.error(error);
+                                    setStatus("error");
+                                    setMessage("Network error occurred.");
+                                } finally {
+                                    setResetting(false);
+                                }
+                            }}
+                            disabled={loading || resetting}
+                            className="w-full bg-red-900/30 hover:bg-red-900/50 border border-red-900/50 text-red-400 font-bold py-2 px-4 rounded-lg transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                        >
+                            {resetting && <div className="w-4 h-4 border-2 border-red-400 border-t-transparent rounded-full animate-spin" />}
+                            {resetting ? "Resetting..." : "Reset Keys"}
+                        </button>
+                    </div>
                 </form>
             </div>
         </div>

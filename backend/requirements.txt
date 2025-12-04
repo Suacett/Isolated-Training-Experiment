@@ -11,3 +11,5 @@ requests
 asyncpg
 greenlet
 alpaca-py
+pytest
+httpx

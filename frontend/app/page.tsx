@@ -5,7 +5,8 @@ import SetupModal from "./components/SetupModal";
 import AddAssetBar from "./components/AddAssetBar";
 import AssetTable, { Asset } from "./components/AssetTable";
 import DetailDrawer from "./components/DetailDrawer";
-import { RefreshCw } from "lucide-react";
+import LogViewer from "./components/LogViewer";
+import { RefreshCw, Settings, Terminal } from "lucide-react";
 
 const API_BASE = "http://localhost:8000";
 
@@ -21,6 +22,8 @@ interface DashboardItem {
 
 export default function Home() {
   const [configured, setConfigured] = useState<boolean | null>(null);
+  const [isSetupOpen, setIsSetupOpen] = useState(false);
+  const [isLogsOpen, setIsLogsOpen] = useState(false);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -90,19 +93,37 @@ export default function Home() {
   const handleAddAsset = async (ticker: string) => {
     try {
       // 1. Add to watchlist
-      await fetch(`${API_BASE}/watchlist`, {
+      const watchlistRes = await fetch(`${API_BASE}/watchlist`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ticker }),
       });
 
+      if (!watchlistRes.ok) {
+        const err = await watchlistRes.json();
+        alert(`Error adding to watchlist: ${err.detail || "Unknown error"}`);
+        return;
+      }
+
       // 2. Ingest data for this ticker
-      await fetch(`${API_BASE}/ingest/${ticker}`, { method: "POST" });
+      const ingestRes = await fetch(`${API_BASE}/ingest/${ticker}`, { method: "POST" });
+
+      if (!ingestRes.ok) {
+        const err = await ingestRes.json();
+        alert(`Error ingesting data: ${err.detail || "Unauthorized - Check your API Keys"}`);
+        // Optional: Remove from watchlist if ingest fails? 
+        // For now, we'll leave it or the user can remove it manually.
+        // But the requirement says "Do not add the asset to the table if the fetch fails".
+        // Since we already added it to watchlist, we might want to revert that.
+        await fetch(`${API_BASE}/watchlist/${ticker}`, { method: "DELETE" });
+        return;
+      }
 
       // 3. Refresh dashboard
       await fetchDashboard();
     } catch (err) {
       console.error("Failed to add asset:", err);
+      alert("Network error while adding asset.");
     }
   };
 
@@ -124,18 +145,22 @@ export default function Home() {
     );
   }
 
-  if (!configured) {
-    return <SetupModal />;
-  }
-
   return (
     <div className="flex min-h-screen flex-col bg-black text-zinc-100 font-sans selection:bg-emerald-500/30">
+      {(!configured || isSetupOpen) && (
+        <SetupModal onClose={configured ? () => setIsSetupOpen(false) : undefined} />
+      )}
+
+      {isLogsOpen && (
+        <LogViewer onClose={() => setIsLogsOpen(false)} />
+      )}
+
       <header className="border-b border-zinc-800 bg-zinc-900/50 backdrop-blur-md sticky top-0 z-40">
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full bg-emerald-500 animate-pulse" />
+            <div className={`w-3 h-3 rounded-full ${configured ? "bg-emerald-500 animate-pulse" : "bg-red-500"}`} />
             <h1 className="text-lg font-bold tracking-tight text-white">
-              PORTFOLIO COMMAND CENTER
+              Stock AI Dashboard
             </h1>
           </div>
           <div className="flex items-center gap-4 text-sm text-zinc-500">
@@ -147,14 +172,30 @@ export default function Home() {
             <button
               onClick={handleSyncData}
               disabled={isSyncing}
-              className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 hover:bg-zinc-700 hover:border-zinc-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-emerald-900/20"
             >
-              <RefreshCw size={14} className={isSyncing ? "animate-spin" : ""} />
-              <span>{isSyncing ? "Syncing..." : "Sync Data"}</span>
+              <RefreshCw size={16} className={isSyncing ? "animate-spin" : ""} />
+              <span>{isSyncing ? "Syncing..." : "SYNC DATA"}</span>
             </button>
-            <span className="flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-emerald-500" />
-              System Online
+            <button
+              onClick={() => setIsLogsOpen(true)}
+              className="p-2 rounded-lg bg-zinc-800 border border-zinc-700 hover:bg-zinc-700 hover:border-zinc-600 transition-colors text-zinc-400 hover:text-white"
+              title="System Logs"
+            >
+              <Terminal size={18} />
+            </button>
+            <button
+              onClick={() => setIsSetupOpen(true)}
+              className="p-2 rounded-lg bg-zinc-800 border border-zinc-700 hover:bg-zinc-700 hover:border-zinc-600 transition-colors text-zinc-400 hover:text-white"
+              title="Settings"
+            >
+              <Settings size={18} />
+            </button>
+            <span className="flex items-center gap-1.5 ml-2">
+              <span className={`w-2 h-2 rounded-full ${configured ? "bg-emerald-500" : "bg-red-500"}`} />
+              <span className={configured ? "text-emerald-500" : "text-red-500"}>
+                {configured ? "Active" : "Setup Required"}
+              </span>
             </span>
             <span className="px-2 py-0.5 rounded bg-zinc-800 border border-zinc-700 font-mono text-xs">
               v1.0.0
@@ -172,8 +213,8 @@ export default function Home() {
                 {isLoading
                   ? "Loading data..."
                   : assets.length === 0
-                  ? "Add assets to your watchlist to begin"
-                  : `Tracking ${assets.length} asset${assets.length !== 1 ? "s" : ""}`}
+                    ? "Add assets to your watchlist to begin"
+                    : `Tracking ${assets.length} asset${assets.length !== 1 ? "s" : ""}`}
               </p>
             </div>
             <AddAssetBar onAdd={handleAddAsset} />
