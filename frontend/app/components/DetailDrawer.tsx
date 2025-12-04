@@ -1,6 +1,7 @@
 "use client";
 
-import { X, ZoomIn, ZoomOut } from "lucide-react";
+import { useState, useEffect } from "react";
+import { X, Loader2 } from "lucide-react";
 import {
     ComposedChart,
     Line,
@@ -10,131 +11,66 @@ import {
     CartesianGrid,
     Tooltip,
     ResponsiveContainer,
-    Legend,
     Brush,
-    ReferenceLine,
 } from "recharts";
 import { Asset } from "./AssetTable";
+
+const API_BASE = "http://localhost:8000";
 
 interface DetailDrawerProps {
     asset: Asset | null;
     onClose: () => void;
 }
 
-// --- Mock Data Generator (90 Days OHLC) ---
-const generateProHistory = (basePrice: number) => {
-    const data = [];
-    let currentPrice = basePrice;
-    const now = new Date();
+// API response type
+interface HistoryItem {
+    date: string;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    predicted_close: number | null;
+    intrinsic_value: number;
+}
 
-    for (let i = 90; i >= 0; i--) {
-        const date = new Date(now);
-        date.setDate(date.getDate() - i);
-
-        const volatility = basePrice * 0.02; // 2% daily volatility
-        const change = (Math.random() - 0.5) * volatility;
-
-        const open = currentPrice;
-        const close = currentPrice + change;
-        const high = Math.max(open, close) + Math.random() * volatility * 0.5;
-        const low = Math.min(open, close) - Math.random() * volatility * 0.5;
-
-        // Intrinsic value (slow moving average-ish)
-        const intrinsic = basePrice * (1 + Math.sin(i / 10) * 0.1);
-
-        // Prediction (T+1, slightly noisy)
-        const prediction = close * (1 + (Math.random() - 0.5) * 0.03);
-
-        // Accuracy (Directional)
-        // For simplicity, let's say "correct" if prediction direction matches next day's actual direction
-        // But since we generate backwards, let's just randomize "correctness" for the strip
-        const isCorrect = Math.random() > 0.4; // 60% accuracy
-
-        data.push({
-            date: date.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
-            open,
-            high,
-            low,
-            close,
-            intrinsic,
-            prediction,
-            isCorrect,
-            errorPct: Math.abs((prediction - close) / close) * 100,
-        });
-
-        currentPrice = close;
-    }
-    return data;
-};
+interface ChartDataPoint {
+    date: string;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    intrinsic: number;
+    prediction: number | null;
+    isCorrect: boolean;
+    errorPct: number;
+}
 
 // --- Custom Candlestick Shape ---
-const Candlestick = (props: any) => {
-    const {
-        x,
-        y,
-        width,
-        height,
-        low,
-        high,
-        open,
-        close,
-    } = props;
+const Candlestick = (props: {
+    x?: number;
+    width?: number;
+    payload?: { open: number; high: number; low: number; close: number };
+    yAxis?: { scale: (val: number) => number };
+    xAxis?: unknown;
+}) => {
+    const { x, width, payload, yAxis, xAxis } = props;
 
+    if (!yAxis || !xAxis || !payload || x === undefined || width === undefined) return null;
+
+    const { open, close, high, low } = payload;
     const isBullish = close > open;
-    const color = isBullish ? "#10b981" : "#f43f5e"; // Emerald-500 vs Rose-500
-    const ratio = Math.abs(height / (open - close)); // Pixels per dollar
+    const color = isBullish ? "#10b981" : "#f43f5e";
 
-    // Calculate y-coordinates for high and low wicks
-    // Recharts passes y for the 'top' of the bar (min value if inverted, but here y is top pixel)
-    // We need to map values to pixels. 
-    // Actually, Recharts custom shape props are a bit tricky. 
-    // Let's rely on the passed `y` and `height` which correspond to the bar body (open/close).
-    // But we need high/low pixels. 
-    // A better approach for Recharts candlesticks is often using ErrorBar or just drawing lines relative to the body if we had the scale.
-    // Since we don't have the scale easily in the shape, we can try a simpler approximation or use the `payload` if available.
-
-    // Alternative: Use a standard Bar for the body, and ErrorBar for wicks? 
-    // Or just draw the body and a line through the middle.
-    // The `y` prop is the top of the bar, `height` is the height.
-    // We need to know where High and Low are.
-    // Fortunately, we can pass the y-scale or calculate relative positions if we passed them.
-
-    // Let's try a simplified approach: 
-    // We will assume the Bar component is rendering the [Min(Open, Close), Max(Open, Close)] range.
-    // So `y` is the top of the body, `y + height` is the bottom.
-    // We need to draw wicks to High and Low.
-    // BUT, the Bar dataKey usually only takes one value. 
-    // To do proper candlesticks in Recharts, we often use a ComposedChart with:
-    // 1. Bar for the body (Open-Close range? No, Bar takes a value).
-    // 2. ErrorBar? 
-
-    // ACTUALLY, the standard way to do Candlesticks in Recharts is a bit hacky.
-    // We will use a custom shape on a Bar that has dataKey="high" (max range) but we need to draw the body inside.
-    // Let's pass the full payload to the shape.
-
-    // Wait, simpler: 
-    // We can use a Bar chart where the data is [min, max] for the range? No.
-
-    // Let's stick to the "Pro" requirement:
-    // We will draw the body using the `open` and `close` from `payload`.
-    // We need the YAxis scale to convert values to pixels. 
-    // Recharts passes `yAxis` to the custom shape!
-
-    const { yAxis, xAxis } = props;
-    if (!yAxis || !xAxis) return null;
-
-    const yHigh = yAxis.scale(props.payload.high);
-    const yLow = yAxis.scale(props.payload.low);
-    const yOpen = yAxis.scale(props.payload.open);
-    const yClose = yAxis.scale(props.payload.close);
+    const yHigh = yAxis.scale(high);
+    const yLow = yAxis.scale(low);
+    const yOpen = yAxis.scale(open);
+    const yClose = yAxis.scale(close);
 
     const bodyTop = Math.min(yOpen, yClose);
     const bodyHeight = Math.abs(yOpen - yClose);
-    const bodyBottom = bodyTop + bodyHeight;
 
     return (
         <g>
-            {/* Wick */}
             <line
                 x1={x + width / 2}
                 y1={yHigh}
@@ -143,12 +79,11 @@ const Candlestick = (props: any) => {
                 stroke={color}
                 strokeWidth={1}
             />
-            {/* Body */}
             <rect
                 x={x}
                 y={bodyTop}
                 width={width}
-                height={Math.max(2, bodyHeight)} // Min height 2px so dojis are visible
+                height={Math.max(2, bodyHeight)}
                 fill={color}
                 stroke="none"
             />
@@ -157,7 +92,11 @@ const Candlestick = (props: any) => {
 };
 
 // --- Custom Tooltip ---
-const CustomTooltip = ({ active, payload, label }: any) => {
+const CustomTooltip = ({ active, payload, label }: {
+    active?: boolean;
+    payload?: Array<{ payload: ChartDataPoint }>;
+    label?: string;
+}) => {
     if (active && payload && payload.length) {
         const data = payload[0].payload;
         return (
@@ -175,12 +114,24 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 
                     <div className="col-span-2 h-px bg-zinc-800 my-1" />
 
-                    <span className="text-yellow-500">Pred:</span>
-                    <span className="text-right text-yellow-500">${data.prediction.toFixed(2)}</span>
-                    <span className="text-purple-400">Intr:</span>
-                    <span className="text-right text-purple-400">${data.intrinsic.toFixed(2)}</span>
-                    <span className="text-zinc-500">Error:</span>
-                    <span className="text-right text-zinc-300">{data.errorPct.toFixed(2)}%</span>
+                    {data.prediction !== null && (
+                        <>
+                            <span className="text-yellow-500">Pred:</span>
+                            <span className="text-right text-yellow-500">${data.prediction.toFixed(2)}</span>
+                        </>
+                    )}
+                    {data.intrinsic > 0 && (
+                        <>
+                            <span className="text-purple-400">Intr:</span>
+                            <span className="text-right text-purple-400">${data.intrinsic.toFixed(2)}</span>
+                        </>
+                    )}
+                    {data.prediction !== null && (
+                        <>
+                            <span className="text-zinc-500">Error:</span>
+                            <span className="text-right text-zinc-300">{data.errorPct.toFixed(2)}%</span>
+                        </>
+                    )}
                 </div>
             </div>
         );
@@ -189,9 +140,74 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 };
 
 export default function DetailDrawer({ asset, onClose }: DetailDrawerProps) {
-    if (!asset) return null;
+    const [data, setData] = useState<ChartDataPoint[]>([]);
+    const [isLoading, setIsLoading] = useState(false);
+    const [accuracy, setAccuracy] = useState<number | null>(null);
 
-    const data = generateProHistory(asset.price);
+    // Fetch history data when asset changes
+    useEffect(() => {
+        if (!asset) return;
+
+        const fetchHistory = async () => {
+            setIsLoading(true);
+            try {
+                const res = await fetch(`${API_BASE}/dashboard/${asset.ticker}`);
+                if (!res.ok) throw new Error("Failed to fetch history");
+
+                const json = await res.json();
+                const history: HistoryItem[] = json.history || [];
+
+                // Transform API data to chart format
+                const chartData: ChartDataPoint[] = history.map((item, index, arr) => {
+                    // Calculate accuracy: was yesterday's prediction correct about today's direction?
+                    let isCorrect = false;
+                    if (index > 0 && arr[index - 1].predicted_close !== null) {
+                        const prevPrediction = arr[index - 1].predicted_close!;
+                        const prevClose = arr[index - 1].close;
+                        const predictedDirection = prevPrediction > prevClose;
+                        const actualDirection = item.close > prevClose;
+                        isCorrect = predictedDirection === actualDirection;
+                    }
+
+                    const errorPct = item.predicted_close !== null
+                        ? Math.abs((item.predicted_close - item.close) / item.close) * 100
+                        : 0;
+
+                    return {
+                        date: new Date(item.date).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+                        open: item.open,
+                        high: item.high,
+                        low: item.low,
+                        close: item.close,
+                        intrinsic: item.intrinsic_value || 0,
+                        prediction: item.predicted_close,
+                        isCorrect,
+                        errorPct,
+                    };
+                });
+
+                setData(chartData);
+
+                // Calculate overall accuracy
+                const withPredictions = chartData.filter((_, i) => i > 0 && chartData[i - 1].prediction !== null);
+                if (withPredictions.length > 0) {
+                    const correctCount = withPredictions.filter(d => d.isCorrect).length;
+                    setAccuracy(Math.round((correctCount / withPredictions.length) * 100));
+                } else {
+                    setAccuracy(null);
+                }
+            } catch (err) {
+                console.error("Failed to fetch history:", err);
+                setData([]);
+            } finally {
+                setIsLoading(false);
+            }
+        };
+
+        fetchHistory();
+    }, [asset]);
+
+    if (!asset) return null;
 
     return (
         <div className="fixed inset-y-0 right-0 w-[800px] bg-zinc-950 border-l border-zinc-800 shadow-2xl transform transition-transform duration-300 ease-in-out z-50 flex flex-col">
@@ -223,104 +239,119 @@ export default function DetailDrawer({ asset, onClose }: DetailDrawerProps) {
 
             {/* Main Content */}
             <div className="flex-1 p-4 overflow-hidden flex flex-col">
-                {/* Chart Container */}
-                <div className="flex-1 bg-zinc-900/30 rounded-xl border border-zinc-800 p-4 flex flex-col min-h-0">
-                    <div className="flex justify-between items-center mb-2">
-                        <h3 className="text-xs font-medium text-zinc-500 uppercase tracking-wider">
-                            Price Action & AI Forecast
-                        </h3>
-                        <div className="flex gap-2 text-xs">
-                            <div className="flex items-center gap-1">
-                                <div className="w-2 h-2 rounded-full bg-purple-400" />
-                                <span className="text-zinc-400">Intrinsic</span>
+                {isLoading ? (
+                    <div className="flex-1 flex items-center justify-center">
+                        <Loader2 className="animate-spin text-zinc-500" size={32} />
+                    </div>
+                ) : data.length === 0 ? (
+                    <div className="flex-1 flex items-center justify-center text-zinc-500">
+                        <p>No historical data available. Click "Sync Data" to fetch.</p>
+                    </div>
+                ) : (
+                    <>
+                        {/* Chart Container */}
+                        <div className="flex-1 bg-zinc-900/30 rounded-xl border border-zinc-800 p-4 flex flex-col min-h-0">
+                            <div className="flex justify-between items-center mb-2">
+                                <h3 className="text-xs font-medium text-zinc-500 uppercase tracking-wider">
+                                    Price Action & AI Forecast
+                                </h3>
+                                <div className="flex gap-2 text-xs">
+                                    <div className="flex items-center gap-1">
+                                        <div className="w-2 h-2 rounded-full bg-purple-400" />
+                                        <span className="text-zinc-400">Intrinsic</span>
+                                    </div>
+                                    <div className="flex items-center gap-1">
+                                        <div className="w-2 h-2 rounded-full bg-yellow-500" />
+                                        <span className="text-zinc-400">AI Pred</span>
+                                    </div>
+                                </div>
                             </div>
-                            <div className="flex items-center gap-1">
-                                <div className="w-2 h-2 rounded-full bg-yellow-500" />
-                                <span className="text-zinc-400">AI Pred</span>
+
+                            <div className="flex-1 min-h-0">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <ComposedChart data={data}>
+                                        <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
+                                        <XAxis
+                                            dataKey="date"
+                                            stroke="#52525b"
+                                            fontSize={10}
+                                            tickLine={false}
+                                            axisLine={false}
+                                            minTickGap={30}
+                                        />
+                                        <YAxis
+                                            stroke="#52525b"
+                                            fontSize={10}
+                                            domain={['auto', 'auto']}
+                                            tickLine={false}
+                                            axisLine={false}
+                                            tickFormatter={(val) => `$${val.toFixed(0)}`}
+                                        />
+                                        <Tooltip content={<CustomTooltip />} />
+
+                                        {/* Intrinsic Value Line */}
+                                        <Line
+                                            type="monotone"
+                                            dataKey="intrinsic"
+                                            stroke="#a78bfa"
+                                            strokeWidth={2}
+                                            dot={false}
+                                            activeDot={false}
+                                        />
+
+                                        {/* Prediction Line */}
+                                        <Line
+                                            type="monotone"
+                                            dataKey="prediction"
+                                            stroke="#eab308"
+                                            strokeWidth={2}
+                                            strokeDasharray="4 4"
+                                            dot={false}
+                                            activeDot={false}
+                                        />
+
+                                        {/* Candlesticks */}
+                                        <Bar
+                                            dataKey="close"
+                                            shape={<Candlestick />}
+                                            isAnimationActive={false}
+                                        />
+
+                                        <Brush
+                                            dataKey="date"
+                                            height={30}
+                                            stroke="#52525b"
+                                            fill="#18181b"
+                                            tickFormatter={() => ""}
+                                        />
+                                    </ComposedChart>
+                                </ResponsiveContainer>
                             </div>
                         </div>
-                    </div>
 
-                    <div className="flex-1 min-h-0">
-                        <ResponsiveContainer width="100%" height="100%">
-                            <ComposedChart data={data}>
-                                <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
-                                <XAxis
-                                    dataKey="date"
-                                    stroke="#52525b"
-                                    fontSize={10}
-                                    tickLine={false}
-                                    axisLine={false}
-                                    minTickGap={30}
-                                />
-                                <YAxis
-                                    stroke="#52525b"
-                                    fontSize={10}
-                                    domain={['auto', 'auto']}
-                                    tickLine={false}
-                                    axisLine={false}
-                                    tickFormatter={(val) => `$${val.toFixed(0)}`}
-                                />
-                                <Tooltip content={<CustomTooltip />} />
-
-                                {/* Intrinsic Value Line */}
-                                <Line
-                                    type="monotone"
-                                    dataKey="intrinsic"
-                                    stroke="#a78bfa" // Purple-400
-                                    strokeWidth={2}
-                                    dot={false}
-                                    activeDot={false}
-                                />
-
-                                {/* Prediction Line */}
-                                <Line
-                                    type="monotone"
-                                    dataKey="prediction"
-                                    stroke="#eab308" // Yellow-500
-                                    strokeWidth={2}
-                                    strokeDasharray="4 4"
-                                    dot={false}
-                                    activeDot={false}
-                                />
-
-                                {/* Candlesticks (Using Bar with custom shape) */}
-                                {/* We bind 'close' to dataKey just to give it a value range, but the shape uses payload */}
-                                <Bar
-                                    dataKey="close"
-                                    shape={<Candlestick />}
-                                    isAnimationActive={false}
-                                />
-
-                                <Brush
-                                    dataKey="date"
-                                    height={30}
-                                    stroke="#52525b"
-                                    fill="#18181b"
-                                    tickFormatter={() => ""}
-                                />
-                            </ComposedChart>
-                        </ResponsiveContainer>
-                    </div>
-                </div>
-
-                {/* Performance Strip */}
-                <div className="mt-4 h-16 bg-zinc-900/30 rounded-xl border border-zinc-800 p-3 flex flex-col justify-center">
-                    <div className="flex justify-between items-center mb-2">
-                        <span className="text-xs font-medium text-zinc-500 uppercase tracking-wider">AI Accuracy Stream (Last 90 Days)</span>
-                        <span className="text-xs font-mono text-emerald-500">62% Correct</span>
-                    </div>
-                    <div className="flex gap-0.5 h-full w-full overflow-hidden">
-                        {data.map((d, i) => (
-                            <div
-                                key={i}
-                                className={`flex-1 rounded-sm ${d.isCorrect ? "bg-emerald-500/50" : "bg-rose-500/50"
-                                    } hover:opacity-100 transition-opacity`}
-                                title={`${d.date}: ${d.isCorrect ? "Correct" : "Incorrect"}`}
-                            />
-                        ))}
-                    </div>
-                </div>
+                        {/* Performance Strip */}
+                        <div className="mt-4 h-16 bg-zinc-900/30 rounded-xl border border-zinc-800 p-3 flex flex-col justify-center">
+                            <div className="flex justify-between items-center mb-2">
+                                <span className="text-xs font-medium text-zinc-500 uppercase tracking-wider">
+                                    AI Accuracy Stream (Last {data.length} Days)
+                                </span>
+                                <span className={`text-xs font-mono ${accuracy !== null && accuracy >= 50 ? "text-emerald-500" : "text-rose-500"}`}>
+                                    {accuracy !== null ? `${accuracy}% Correct` : "N/A"}
+                                </span>
+                            </div>
+                            <div className="flex gap-0.5 h-full w-full overflow-hidden">
+                                {data.map((d: ChartDataPoint, i: number) => (
+                                    <div
+                                        key={i}
+                                        className={`flex-1 rounded-sm ${d.isCorrect ? "bg-emerald-500/50" : "bg-rose-500/50"
+                                            } hover:opacity-100 transition-opacity`}
+                                        title={`${d.date}: ${d.isCorrect ? "Correct" : "Incorrect"}`}
+                                    />
+                                ))}
+                            </div>
+                        </div>
+                    </>
+                )}
             </div>
         </div>
     );

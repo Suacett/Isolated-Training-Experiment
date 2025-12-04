@@ -24,26 +24,20 @@ def mock_alpaca():
 
 def test_add_watchlist_item(mock_db_functions, mock_alpaca):
     mock_add, _, _, _, _ = mock_db_functions
-    
-    response = client.post("/watchlist/add", json={"ticker": "AAPL"})
+
+    response = client.post("/watchlist", json={"ticker": "AAPL"})
     assert response.status_code == 200
     assert response.json() == {"message": "Added AAPL to watchlist"}
-    
+
     mock_add.assert_called_once_with("AAPL")
-    # Note: alpaca_client might not be called if startup event didn't run or if we didn't mock the global properly.
-    # In TestClient, startup events run.
-    # But we patched 'backend.main.alpaca_client'.
-    # Let's check if fetch_data was called.
-    # Since alpaca_client is a global variable in main, patching it might be tricky if it's replaced in startup.
-    # But we can patch the class 'AlpacaDataClient' in main.
-    
+
 def test_remove_watchlist_item(mock_db_functions):
     _, mock_remove, _, _, _ = mock_db_functions
-    
-    response = client.delete("/watchlist/remove?ticker=AAPL")
+
+    response = client.delete("/watchlist/AAPL")
     assert response.status_code == 200
     assert response.json() == {"message": "Removed AAPL from watchlist"}
-    
+
     mock_remove.assert_called_once_with("AAPL")
 
 def test_get_dashboard(mock_db_functions):

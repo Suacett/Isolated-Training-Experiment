@@ -1,7 +1,6 @@
 import logging
-import os
+from pathlib import Path
 import torch
-import pandas as pd
 import numpy as np
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,13 +11,15 @@ from services.data_ingest import AlpacaDataClient
 from utils.config_loader import load_config, save_config
 from pydantic import BaseModel
 from datetime import datetime
-from typing import List
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI()
+
+# Model weights path
+MODEL_WEIGHTS_PATH = Path(__file__).parent / "models" / "lstm_model.pth"
 
 # CORS
 app.add_middleware(
@@ -42,31 +43,54 @@ async def startup_event():
     global lstm_model, device
     device = get_device()
     logger.info(f"Running on device: {device}")
-    
-    # Initialize LSTM Model
-    # Input dim = 5 (open, high, low, close, volume)
-    # Window size = 60
-    lstm_model = LSTMModel(input_dim=5, window_size=60)
-    lstm_model.to(device)
-    # Ideally load weights here: lstm_model.load_state_dict(torch.load("model.pth"))
-    logger.info("LSTM Model initialized")
-    
+
+    # Create models directory if it doesn't exist
+    MODEL_WEIGHTS_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+    # Try to load existing model weights, otherwise create new model
+    if MODEL_WEIGHTS_PATH.exists():
+        try:
+            lstm_model = LSTMModel.load(str(MODEL_WEIGHTS_PATH), device)
+            logger.info(f"Loaded trained model from {MODEL_WEIGHTS_PATH}")
+        except Exception as e:
+            logger.warning(f"Failed to load model weights: {e}. Creating new model.")
+            lstm_model = LSTMModel(input_dim=5, window_size=60, device=device)
+    else:
+        # Initialize new LSTM Model
+        # Input dim = 5 (open, high, low, close, volume)
+        # Window size = 60
+        lstm_model = LSTMModel(input_dim=5, window_size=60, device=device)
+        logger.info("Initialized new LSTM model (no trained weights found)")
+
     global alpaca_client
     alpaca_client = AlpacaDataClient()
     logger.info("Alpaca Client initialized")
 
 class APIKeys(BaseModel):
-    ALPACA_API_KEY: str
-    ALPACA_SECRET_KEY: str
+    ALPACA_API_KEY: str = None
+    ALPACA_SECRET_KEY: str = None
+    ALPHA_VANTAGE_KEY: str = None
+
 
 @app.get("/status")
 async def get_status():
     config = load_config()
-    return {"configured": config is not None}
+    has_alpaca = bool(config and config.get("ALPACA_API_KEY") and config.get("ALPACA_SECRET_KEY"))
+    has_alpha_vantage = bool(config and config.get("ALPHA_VANTAGE_KEY"))
+    return {
+        "configured": has_alpaca or has_alpha_vantage,
+        "alpaca_configured": has_alpaca,
+        "alpha_vantage_configured": has_alpha_vantage
+    }
+
 
 @app.post("/settings/keys")
 async def save_keys(keys: APIKeys):
-    save_config(keys.ALPACA_API_KEY, keys.ALPACA_SECRET_KEY)
+    save_config(
+        alpaca_api_key=keys.ALPACA_API_KEY,
+        alpaca_secret_key=keys.ALPACA_SECRET_KEY,
+        alpha_vantage_key=keys.ALPHA_VANTAGE_KEY
+    )
     return {"message": "Keys saved successfully"}
 
 @app.post("/ingest/all")
@@ -290,5 +314,37 @@ async def get_dashboard_detail(ticker: str):
             "predicted_close": pred,
             "intrinsic_value": intrinsic_val
         })
-        
+
     return {"history": history_response}
+
+
+@app.post("/model/save")
+async def save_model():
+    """Save the current model weights to disk."""
+    if lstm_model is None:
+        raise HTTPException(status_code=500, detail="Model not initialized")
+
+    try:
+        lstm_model.save(str(MODEL_WEIGHTS_PATH))
+        return {"message": f"Model saved to {MODEL_WEIGHTS_PATH}"}
+    except Exception as e:
+        logger.error(f"Failed to save model: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/model/status")
+async def get_model_status():
+    """Get current model status and info."""
+    if lstm_model is None:
+        return {"initialized": False}
+
+    return {
+        "initialized": True,
+        "device": str(device),
+        "input_dim": lstm_model.input_dim,
+        "hidden_dim": lstm_model.hidden_dim,
+        "output_dim": lstm_model.output_dim,
+        "window_size": lstm_model.window_size,
+        "weights_path": str(MODEL_WEIGHTS_PATH),
+        "weights_exist": MODEL_WEIGHTS_PATH.exists()
+    }

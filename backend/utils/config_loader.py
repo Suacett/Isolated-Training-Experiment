@@ -4,45 +4,79 @@ from typing import Optional, Dict
 
 SECRETS_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "secrets.json")
 
+
 def load_config() -> Optional[Dict[str, str]]:
     """
     Attempts to read backend/secrets.json.
-    If the file doesn't exist or keys are missing, return None.
+    Returns the full config dict, or None if file doesn't exist.
     """
     if not os.path.exists(SECRETS_FILE):
         return None
-    
+
     try:
         with open(SECRETS_FILE, "r") as f:
             data = json.load(f)
-            
-        api_key = data.get("ALPACA_API_KEY")
-        secret_key = data.get("ALPACA_SECRET_KEY")
-        
-        if not api_key or not secret_key:
-            return None
-            
-        return {"ALPACA_API_KEY": api_key, "ALPACA_SECRET_KEY": secret_key}
+        return data
     except Exception:
         return None
 
-def save_config(api_key: str, secret_key: str):
-    """
-    Saves ALPACA_API_KEY and ALPACA_SECRET_KEY to backend/secrets.json.
-    """
-    data = {"ALPACA_API_KEY": api_key, "ALPACA_SECRET_KEY": secret_key}
-    with open(SECRETS_FILE, "w") as f:
-        json.dump(data, f, indent=4)
 
-class Config:
+def save_config(
+    alpaca_api_key: str = None,
+    alpaca_secret_key: str = None,
+    alpha_vantage_key: str = None
+):
+    """
+    Saves API keys to backend/secrets.json.
+    Preserves existing keys if not provided.
+    """
+    # Load existing config
+    existing = load_config() or {}
+
+    # Update with new values (if provided)
+    if alpaca_api_key is not None:
+        existing["ALPACA_API_KEY"] = alpaca_api_key
+    if alpaca_secret_key is not None:
+        existing["ALPACA_SECRET_KEY"] = alpaca_secret_key
+    if alpha_vantage_key is not None:
+        existing["ALPHA_VANTAGE_KEY"] = alpha_vantage_key
+
+    with open(SECRETS_FILE, "w") as f:
+        json.dump(existing, f, indent=4)
+
+
+def is_alpaca_configured() -> bool:
+    """Check if Alpaca credentials are configured."""
+    config = load_config() or {}
+    return bool(config.get("ALPACA_API_KEY") and config.get("ALPACA_SECRET_KEY"))
+
+
+def is_alpha_vantage_configured() -> bool:
+    """Check if Alpha Vantage API key is configured."""
+    config = load_config() or {}
+    return bool(config.get("ALPHA_VANTAGE_KEY"))
+
+
+class _Config:
+    """
+    Config class providing property access to API keys.
+    Supports both Alpaca and Alpha Vantage.
+    """
+
     @property
-    def ALPACA_API_KEY(self):
+    def ALPACA_API_KEY(self) -> Optional[str]:
         config = load_config() or {}
         return config.get("ALPACA_API_KEY")
 
     @property
-    def ALPACA_SECRET_KEY(self):
+    def ALPACA_SECRET_KEY(self) -> Optional[str]:
         config = load_config() or {}
         return config.get("ALPACA_SECRET_KEY")
 
-Config = Config()
+    @property
+    def ALPHA_VANTAGE_KEY(self) -> Optional[str]:
+        config = load_config() or {}
+        return config.get("ALPHA_VANTAGE_KEY")
+
+
+Config = _Config()
