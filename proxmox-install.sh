@@ -42,14 +42,20 @@ echo ""
 # Configuration
 CTID=""
 HOSTNAME="stock-predictor"
-TEMPLATE="local:vztmpl/ubuntu-22.04-standard_22.04-1_amd64.tar.zst"
-STORAGE="local-lvm"
+TEMPLATE_STORAGE="local"  # Templates are stored on 'local', not 'local-lvm'
+ROOTFS_STORAGE="local-lvm"  # Rootfs goes on LVM
 ROOTFS_SIZE=50
 MEMORY=8192
 SWAP=4096
 CORES=4
 PASSWORD=""
 BRIDGE="vmbr0"
+
+# Detect available storage for rootfs
+if ! pvesm status | grep -q "local-lvm"; then
+    ROOTFS_STORAGE="local"
+    msg_warn "local-lvm not found, using 'local' for rootfs"
+fi
 
 # Get next available CT ID
 msg_info "Finding next available container ID..."
@@ -90,18 +96,18 @@ if [ "$PASSWORD" != "$PASSWORD2" ]; then
     exit 1
 fi
 
-# Check if template exists
-if ! pveam list $STORAGE | grep -q "ubuntu-22.04-standard"; then
+# Check if template exists, download if not
+TEMPLATE="$TEMPLATE_STORAGE:vztmpl/ubuntu-22.04-standard_22.04-1_amd64.tar.zst"
+if ! pveam list $TEMPLATE_STORAGE 2>/dev/null | grep -q "ubuntu-22.04-standard"; then
     msg_info "Downloading Ubuntu 22.04 template..."
-    pveam download $STORAGE ubuntu-22.04-standard_22.04-1_amd64.tar.zst
+    pveam download $TEMPLATE_STORAGE ubuntu-22.04-standard_22.04-1_amd64.tar.zst
 fi
 
 # Create container
 msg_info "Creating LXC container $CTID..."
 pct create $CTID $TEMPLATE \
     --hostname $HOSTNAME \
-    --storage $STORAGE \
-    --rootfs $STORAGE:$ROOTFS_SIZE \
+    --rootfs $ROOTFS_STORAGE:$ROOTFS_SIZE \
     --memory $MEMORY \
     --swap $SWAP \
     --cores $CORES \
@@ -139,7 +145,7 @@ sleep 10
 
 # Install stock predictor inside container
 msg_info "Installing Stock Predictor inside container..."
-pct exec $CTID -- bash -c "wget -qO- https://raw.githubusercontent.com/Suacett/Isolated-Training-Experiment/MAIN-BRANCH/install.sh | bash"
+pct exec $CTID -- bash -c "wget -qO- https://raw.githubusercontent.com/Suacett/Isolated-Training-Experiment/main/install.sh | bash"
 
 # Get container IP
 CTIP=$(pct exec $CTID -- hostname -I | awk '{print $1}')
