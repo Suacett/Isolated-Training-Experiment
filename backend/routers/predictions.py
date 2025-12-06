@@ -399,8 +399,9 @@ async def backfill_predictions_full(ticker: str):
         
         # Create a list of window_size-day windows
         # shape: (num_samples, window_size, num_features)
+        # FIX: Use i-window_size+1 : i+1 to include the current day 'i'
         indices = range(window_size, len(processed_df) - 1)
-        windows = [feature_data[i-window_size:i] for i in indices]
+        windows = [feature_data[i-window_size+1:i+1] for i in indices]
         
         if not windows:
             return []

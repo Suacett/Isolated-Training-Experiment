@@ -168,9 +168,9 @@ const MemoizedChart = React.memo(({
                         const isMediumRange = rangeDef && rangeDef.days > 90;
 
                         if (isLongRange) {
-                            // Show Year only for long ranges, but sparsely
+                            // Show Full Year for long ranges
                             const d = data[index];
-                            if (d && index % 10 === 0) return `'${d.fullDate.getFullYear().toString().slice(2)}`;
+                            if (d && index % 12 === 0) return d.fullDate.getFullYear().toString();
                             return "";
                         }
                         if (isMediumRange) {
@@ -338,7 +338,9 @@ const ForecastCard = ({
     changePct,
     infoText,
     isResult,
-    wasCorrect
+    wasCorrect,
+    showPercentage,
+    referencePrice
 }: {
     label: string;
     price: number | null;
@@ -346,8 +348,21 @@ const ForecastCard = ({
     infoText: string;
     isResult?: boolean;
     wasCorrect?: boolean;
+    showPercentage?: boolean;
+    referencePrice?: number;
 }) => {
     const isPositive = (changePct ?? 0) >= 0;
+
+    // Calculate display value based on mode
+    let displayValue = "N/A";
+    if (price !== null) {
+        if (showPercentage && referencePrice) {
+            const relPct = ((price - referencePrice) / referencePrice) * 100;
+            displayValue = `${relPct > 0 ? '+' : ''}${relPct.toFixed(2)}%`;
+        } else {
+            displayValue = `$${price.toFixed(2)}`;
+        }
+    }
 
     return (
         <div className={`flex-shrink-0 w-28 bg-zinc-800/50 rounded-lg p-3 border ${isResult
@@ -365,7 +380,7 @@ const ForecastCard = ({
             </div>
             {price !== null ? (
                 <>
-                    <div className="text-sm font-bold text-white">${price.toFixed(2)}</div>
+                    <div className="text-sm font-bold text-white">{displayValue}</div>
                     <div className={`text-xs font-medium flex items-center gap-0.5 ${isPositive ? 'text-emerald-400' : 'text-rose-400'}`}>
                         {isPositive ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
                         {isPositive ? '+' : ''}{changePct?.toFixed(2)}%
@@ -591,6 +606,12 @@ export default function DetailDrawer({ asset, onClose }: DetailDrawerProps) {
         return downsampled;
     }, [rawData, timeRange]);
 
+    // Helper to get reference price for % calculation
+    const referencePrice = useMemo(() => {
+        if (displayData.length > 0) return displayData[0].close;
+        return 0;
+    }, [displayData]);
+
     // Yesterday's result
     const yesterdayResult = useMemo(() => {
         const withPreds = rawData.filter((d, i) => i > 0 && rawData[i - 1].prediction !== null);
@@ -733,6 +754,8 @@ export default function DetailDrawer({ asset, onClose }: DetailDrawerProps) {
                                     infoText={`AI predicted ${yesterdayResult.predDir} (${yesterdayResult.predMove > 0 ? '+' : ''}${yesterdayResult.predMove.toFixed(2)}%), actual was ${yesterdayResult.actDir} (${yesterdayResult.actMove > 0 ? '+' : ''}${yesterdayResult.actMove.toFixed(2)}%).`}
                                     isResult
                                     wasCorrect={yesterdayResult.wasCorrect}
+                                    showPercentage={showPercentage}
+                                    referencePrice={referencePrice}
                                 />
                             )}
                             {forecasts && (
@@ -742,24 +765,32 @@ export default function DetailDrawer({ asset, onClose }: DetailDrawerProps) {
                                         price={forecasts.forecasts["1d"].price}
                                         changePct={forecasts.forecasts["1d"].change_pct}
                                         infoText="AI prediction for tomorrow's close based on current market data and LSTM model analysis."
+                                        showPercentage={showPercentage}
+                                        referencePrice={referencePrice}
                                     />
                                     <ForecastCard
                                         label="1 Week"
                                         price={forecasts.forecasts["1w"].price}
                                         changePct={forecasts.forecasts["1w"].change_pct}
                                         infoText="AI prediction for next week's close. Longer horizons have higher uncertainty."
+                                        showPercentage={showPercentage}
+                                        referencePrice={referencePrice}
                                     />
                                     <ForecastCard
                                         label="1 Month"
                                         price={forecasts.forecasts["1m"].price}
                                         changePct={forecasts.forecasts["1m"].change_pct}
                                         infoText="AI prediction for next month. Note: Accuracy decreases with longer time horizons."
+                                        showPercentage={showPercentage}
+                                        referencePrice={referencePrice}
                                     />
                                     <ForecastCard
                                         label="6 Months"
                                         price={forecasts.forecasts["6m"].price}
                                         changePct={forecasts.forecasts["6m"].change_pct}
                                         infoText="Long-term AI forecast. Use with caution - long-term predictions are highly speculative."
+                                        showPercentage={showPercentage}
+                                        referencePrice={referencePrice}
                                     />
                                 </>
                             )}
@@ -866,26 +897,50 @@ export default function DetailDrawer({ asset, onClose }: DetailDrawerProps) {
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-zinc-800">
-                                        {displayData.filter(d => d.prediction !== null).reverse().slice(0, 100).map((d, i) => (
-                                            <tr
-                                                key={i}
-                                                className="hover:bg-zinc-800/50 cursor-pointer"
-                                                onClick={() => setSelectedPrediction(d)}
-                                            >
-                                                <td className="p-2 text-zinc-400">{d.date}</td>
-                                                <td className="p-2 text-right font-mono text-emerald-400">${d.close.toFixed(2)}</td>
-                                                <td className="p-2 text-right font-mono text-pink-400">${d.prediction?.toFixed(2)}</td>
-                                                <td className="p-2 text-right font-mono text-blue-400">{d.spyClose ? `$${d.spyClose.toFixed(2)}` : '-'}</td>
-                                                <td className="p-2 text-right font-mono text-zinc-400">{d.errorPct.toFixed(2)}%</td>
-                                                <td className="p-2 text-center">
-                                                    {d.isCorrect ? (
-                                                        <CheckCircle className="inline text-emerald-500" size={14} />
-                                                    ) : (
-                                                        <XCircle className="inline text-rose-500" size={14} />
-                                                    )}
-                                                </td>
-                                            </tr>
-                                        ))}
+                                        {displayData.filter(d => d.prediction !== null).reverse().slice(0, 100).map((d, i, arr) => {
+                                            // Calculate previous close for direction explanation
+                                            const prevIdx = arr.length - 1 - i - 1;
+                                            const prevClose = prevIdx >= 0 && arr[prevIdx] ? arr[prevIdx].close : d.close;
+                                            const predictedDir = d.prediction! > prevClose ? 'UP' : 'DOWN';
+                                            const actualDir = d.close > prevClose ? 'UP' : 'DOWN';
+                                            const whyText = d.isCorrect
+                                                ? `Predicted ${predictedDir}, Actual ${actualDir}. Direction matched.`
+                                                : `Predicted ${predictedDir}, Actual ${actualDir}. Direction mismatch.`;
+
+                                            return (
+                                                <tr
+                                                    key={i}
+                                                    className="hover:bg-zinc-800/50 cursor-pointer"
+                                                    onClick={() => setSelectedPrediction(d)}
+                                                >
+                                                    <td className="p-2 text-zinc-400">{d.date}</td>
+                                                    <td className="p-2 text-right font-mono text-emerald-400">
+                                                        {showPercentage ? `${d.closePct?.toFixed(2)}%` : `$${d.close.toFixed(2)}`}
+                                                    </td>
+                                                    <td className="p-2 text-right font-mono text-pink-400">
+                                                        {showPercentage ? `${d.predictionPct?.toFixed(2)}%` : `$${d.prediction?.toFixed(2)}`}
+                                                    </td>
+                                                    <td className="p-2 text-right font-mono text-blue-400">
+                                                        {d.spyClose ? (showPercentage ? `${d.spyPct?.toFixed(2)}%` : `$${d.spyClose.toFixed(2)}`) : '-'}
+                                                    </td>
+                                                    <td className="p-2 text-right font-mono text-zinc-400">{d.errorPct.toFixed(2)}%</td>
+                                                    <td className="p-2 text-center relative group">
+                                                        {d.isCorrect ? (
+                                                            <CheckCircle className="inline text-emerald-500" size={14} />
+                                                        ) : (
+                                                            <XCircle className="inline text-rose-500" size={14} />
+                                                        )}
+                                                        {/* Why Tooltip */}
+                                                        <div className="absolute bottom-full right-0 mb-1 w-48 bg-zinc-900 border border-zinc-700 p-2 rounded shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-[100] pointer-events-none text-xs text-left">
+                                                            <div className={`font-bold ${d.isCorrect ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                                                {d.isCorrect ? '✓ CORRECT' : '✗ WRONG'}
+                                                            </div>
+                                                            <div className="text-zinc-300 mt-1">{whyText}</div>
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })}
                                     </tbody>
                                 </table>
                             </div>
@@ -910,12 +965,19 @@ export default function DetailDrawer({ asset, onClose }: DetailDrawerProps) {
                                         {/* Hover tooltip */}
                                         <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-36 bg-zinc-900 border border-zinc-700 p-2 rounded shadow-xl opacity-0 invisible group-hover/bar:opacity-100 group-hover/bar:visible transition-all z-[100] pointer-events-none text-xs">
                                             <div className="font-bold text-white mb-1">{d.date}</div>
-                                            <div className="text-zinc-400">Price: <span className="text-emerald-400">${d.close.toFixed(2)}</span></div>
+                                            <div className="text-zinc-400">Price: <span className="text-emerald-400">
+                                                {showPercentage ? `${d.closePct?.toFixed(2)}%` : `$${d.close.toFixed(2)}`}
+                                            </span></div>
                                             {d.prediction !== null && (
-                                                <div className="text-zinc-400">Pred: <span className="text-pink-400">${d.prediction.toFixed(2)}</span></div>
+                                                <div className="text-zinc-400">Pred: <span className="text-pink-400">
+                                                    {showPercentage ? `${d.predictionPct?.toFixed(2)}%` : `$${d.prediction.toFixed(2)}`}
+                                                </span></div>
                                             )}
                                             <div className={`mt-1 font-medium ${d.isCorrect ? "text-emerald-400" : "text-rose-400"}`}>
                                                 {d.isCorrect ? "✓ Correct" : "✗ Wrong"}
+                                            </div>
+                                            <div className="text-[9px] text-zinc-500 mt-1 italic">
+                                                {d.isCorrect ? "Direction matched prediction." : "Direction mismatch."}
                                             </div>
                                         </div>
                                     </div>
