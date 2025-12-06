@@ -9,8 +9,8 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
       POSTGRES_DB: stock_predictor
-    ports:
-      - "5432:5432"
+    # ports:
+    #   - "5432:5432"  # Not exposed externally - backend accesses via internal Docker network
     volumes:
       - db_data:/var/lib/postgresql/data
 
