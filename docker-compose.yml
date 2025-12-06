@@ -17,6 +17,7 @@ services:
   backend:
     build: ./backend
     container_name: proxmox_stock_backend
+    privileged: true # Required for GPU access in LXC containers
     restart: always
     environment:
       - ALPHA_VANTAGE_KEY=${ALPHA_VANTAGE_KEY}
