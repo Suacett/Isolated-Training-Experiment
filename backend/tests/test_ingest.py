@@ -57,8 +57,8 @@ class TestAlphaVantageClient(unittest.TestCase):
         # Run async method
         asyncio.run(client.fetch_daily_data("TEST"))
 
-        # Verify rate limit sleep was called
-        mock_sleep.assert_called_with(15)
+        # Verify rate limit sleep was called (current rate limit is 12s)
+        mock_sleep.assert_called_with(12)
 
         # Verify API called with correct params
         mock_get.assert_called_with(
@@ -67,7 +67,7 @@ class TestAlphaVantageClient(unittest.TestCase):
                 "function": "TIME_SERIES_DAILY",
                 "symbol": "TEST",
                 "apikey": "test_key",
-                "outputsize": "full"
+                "outputsize": "compact"  # Default is compact for daily fetches
             }
         )
 

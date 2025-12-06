@@ -1,16 +1,43 @@
+"""
+Proxmox AI Stock Predictor - Main FastAPI Application
+
+This module serves as the entry point for the backend API, providing:
+- REST endpoints for stock data, predictions, and dashboard views
+- AI model loading and inference using LSTM neural networks
+- Integration with Yahoo Finance (free) and Alpha Vantage (for EPS data)
+- Real-time prediction generation with multi-horizon forecasting
+
+Architecture:
+    - FastAPI application with CORS middleware
+    - Routers for modular endpoint organization
+    - Global state management for model and scaler instances
+    - Dynamic GPU/CPU device selection for inference
+
+Author: Proxmox AI Stock Predictor Team
+License: MIT
+"""
+
+# =============================================================================
+# IMPORTS
+# =============================================================================
+
+# Standard library imports
 import logging
 import sys
 import re
 from pathlib import Path
+from datetime import datetime
+from typing import Optional, List
+
+# Third-party imports
 import torch
 import numpy as np
+import pandas as pd
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional, List
-from datetime import datetime
-import pandas as pd
 
+# Local application imports - Services
 from services.lstm_model import LSTMModel, get_device
 from services.db import (
     get_watchlist,
@@ -30,8 +57,15 @@ from services.scaler import FeatureScaler
 from services.feature_engineering import process_stock_data, get_model_input_features
 from services.model_metadata import get_available_models, get_model_info, MODEL_REGISTRY
 from services.model_loader import model_loader
-from utils.config_loader import settings, save_config, clear_config, is_alpha_vantage_configured, get_playground_enabled, set_playground_enabled
+
+# Local application imports - Configuration and State
+from utils.config_loader import (
+    settings, save_config, clear_config, 
+    is_alpha_vantage_configured, get_playground_enabled, set_playground_enabled
+)
 from state import state
+
+# Local application imports - Routers
 from routers import ingestion, predictions, dashboard, backtest, stocks
 
 # Configure logging
@@ -59,9 +93,17 @@ logger = logging.getLogger(__name__)
 for handler in logging.getLogger().handlers:
     handler.addFilter(APIKeyFilter())
 
-app = FastAPI()
+# =============================================================================
+# FASTAPI APPLICATION SETUP
+# =============================================================================
 
-# Include Routers
+app = FastAPI(
+    title="Proxmox AI Stock Predictor",
+    description="LSTM-based stock prediction API with multi-horizon forecasting",
+    version="1.0.0"
+)
+
+# Include modular routers for endpoint organization
 app.include_router(stocks.router)
 app.include_router(ingestion.router)
 app.include_router(predictions.router)
@@ -88,7 +130,7 @@ for version in MODEL_VERSIONS:
         ACTIVE_MODEL_VERSION = version
         break
 
-# CORS
+# CORS Configuration - Allow frontend access
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://localhost:3001"],
@@ -96,6 +138,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# =============================================================================
+# PYDANTIC MODELS (Request/Response Schemas)
+# =============================================================================
 
 class WatchlistItem(BaseModel):
     ticker: str

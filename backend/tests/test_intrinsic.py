@@ -40,10 +40,10 @@ def test_graham_calculation():
     valuator = IntrinsicCalculator()
 
     eps = 5.0
-    g = 0.10  # 10% growth -> g_for_formula = 10
-    y = 4.4   # 4.4% bond yield as percentage (not decimal)
+    g = 0.10  # 10% growth as decimal
+    y = 0.044  # 4.4% bond yield as DECIMAL (implementation converts to percentage)
 
-    # Legacy formula: eps * (8.5 + 2*g*100) * (bond_yield / 4.4)
+    # Formula: eps * (8.5 + 2*g*100) * (4.4 / (y*100))
     # V = 5 * (8.5 + 20) * (4.4/4.4) = 5 * 28.5 * 1 = 142.5
     value = valuator.calculate_graham_value(eps, g, y)
 
@@ -55,10 +55,10 @@ def test_graham_calculation_alternative_bond_yield():
     valuator = IntrinsicCalculator()
 
     eps = 5.0
-    g = 0.10  # 10% growth
-    y = 5.5   # 5.5% bond yield as percentage
+    g = 0.10  # 10% growth as decimal
+    y = 0.0352  # 3.52% bond yield as DECIMAL (gives 4.4/3.52 = 1.25 multiplier)
 
-    # V = 5 * (8.5 + 20) * (5.5/4.4) = 5 * 28.5 * 1.25 = 178.125
+    # V = 5 * (8.5 + 20) * (4.4/3.52) = 5 * 28.5 * 1.25 = 178.125
     value = valuator.calculate_graham_value(eps, g, y)
 
     assert value == pytest.approx(178.125, rel=0.01)
