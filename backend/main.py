@@ -130,10 +130,10 @@ for version in MODEL_VERSIONS:
         ACTIVE_MODEL_VERSION = version
         break
 
-# CORS Configuration - Allow frontend access
+# CORS Configuration - Allow all origins for portfolio demo
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3001"],
+    allow_origins=["*"],  # Allow all origins for demo/portfolio
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
