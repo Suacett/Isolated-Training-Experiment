@@ -58,6 +58,7 @@ Add these lines:
 ```
 # GPU Passthrough
 lxc.cgroup2.devices.allow: c 195:* rwm
+lxc.cgroup2.devices.allow: c 234:* rwm  # nvidia-uvm (required for CUDA)
 lxc.cgroup2.devices.allow: c 509:* rwm
 lxc.mount.entry: /dev/nvidia0 dev/nvidia0 none bind,optional,create=file
 lxc.mount.entry: /dev/nvidiactl dev/nvidiactl none bind,optional,create=file
@@ -229,6 +230,30 @@ NVIDIA Container Toolkit not installed or configured. Run:
 ```bash
 nvidia-ctk runtime configure --runtime=docker
 systemctl restart docker
+```
+
+### Docker in LXC: "CUDA unknown error"
+When running Docker inside an LXC container, CUDA may fail with "unknown error". Configure NVIDIA Container Toolkit:
+
+```bash
+# Edit NVIDIA container toolkit config
+nano /etc/nvidia-container-runtime/config.toml
+
+# Under [nvidia-container-cli], add:
+no-cgroups = true
+
+# Restart Docker
+systemctl restart docker
+```
+
+If `/dev/nvidia-uvm` is missing, create it manually:
+```bash
+# Find the device major number
+cat /proc/devices | grep nvidia-uvm
+
+# Create the device (replace 234 with actual number if different)
+mknod -m 666 /dev/nvidia-uvm c 234 0
+mknod -m 666 /dev/nvidia-uvm-tools c 234 1
 ```
 
 ---
