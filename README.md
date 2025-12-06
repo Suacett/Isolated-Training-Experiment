@@ -17,7 +17,7 @@ designed for deployment on Proxmox with optional GPU acceleration.
 ### One-Line Installation (Proxmox/Debian/Ubuntu)
 
 ```bash
-bash -c "$(wget -qO- https://raw.githubusercontent.com/Suacett/Isolated-Training-Experiment/main/install.sh)"
+bash -c "$(wget -qO- https://raw.githubusercontent.com/Suacett/Isolated-Training-Experiment/MAIN-BRANCH/install.sh)"
 ```
 
 The installer will:
