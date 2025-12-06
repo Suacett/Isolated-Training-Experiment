@@ -6,8 +6,8 @@ import csv
 # Add backend to sys.path to allow imports
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
 
-from backend.services.db import init_db
-from backend.services.data_ingest import AlphaVantageClient
+from services.db import init_db
+from services.data_ingest import AlphaVantageClient
 
 async def seed_data():
     print("Initializing database...")

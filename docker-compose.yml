@@ -9,8 +9,8 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
       POSTGRES_DB: stock_predictor
-    ports:
-      - "5432:5432"
+    # ports:
+    #   - "5432:5432"  # Not exposed externally - backend accesses via internal Docker network
     volumes:
       - db_data:/var/lib/postgresql/data
 
@@ -20,9 +20,13 @@ services:
     restart: always
     environment:
       - ALPHA_VANTAGE_KEY=${ALPHA_VANTAGE_KEY}
+      - ALPHA_VANTAGE_KEYS=${ALPHA_VANTAGE_KEYS:-}
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-password}@db:5432/stock_predictor
     ports:
       - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - ./legacy:/app/legacy
     depends_on:
       - db
     deploy:
@@ -35,13 +39,21 @@ services:
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      target: development
     container_name: proxmox_stock_frontend
     restart: always
     ports:
       - "3001:3000"
     environment:
       - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - WATCHPACK_POLLING=true
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    command: npm run dev
     depends_on:
       - backend
 

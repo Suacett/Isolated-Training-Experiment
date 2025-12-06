@@ -15,6 +15,14 @@ RUN \
     else echo "Lockfile not found." && exit 1; \
     fi
 
+# Development image, copy all the files and run next
+FROM base AS development
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+ENV NODE_ENV development
+CMD ["npm", "run", "dev"]
+
 
 # Rebuild the source code only when needed
 FROM base AS builder

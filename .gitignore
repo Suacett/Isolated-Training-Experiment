@@ -38,3 +38,8 @@ backend/__pycache__/
 backend/venv/
 .git/
 GEMINI.md/
+INTEGRATION_COMPLETE.md
+CLAUDE.md
+IMPLEMENTATION_SUMMARY.md
+backend/models/lstm_model_backup.pth
+CLAUDE.md

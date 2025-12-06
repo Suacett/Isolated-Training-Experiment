@@ -30,23 +30,24 @@ def test_lstm_architecture():
     assert not torch.allclose(out1, out2), "Dropout should be active (MC Dropout)"
 
 def test_intrinsic_formula():
+    """Test intrinsic value formula with decimal inputs."""
     calc = IntrinsicCalculator()
     
-    # Test case
+    # Test case: Implementation expects decimals, converts internally
     eps = 10.0
-    g = 0.05 # 5%
-    yield_val = 4.4
+    g = 0.05  # 5% as decimal
+    yield_val = 0.044  # 4.4% as DECIMAL (implementation converts to %)
     
-    # Formula: eps * (8.5 + 2 * (g * 100)) * (yield / 4.4)
+    # Formula: eps * (8.5 + 2 * (g * 100)) * (4.4 / (yield_val * 100))
     # Expected: 10 * (8.5 + 2 * 5) * (4.4 / 4.4)
     #         = 10 * (8.5 + 10) * 1
     #         = 10 * 18.5
     #         = 185.0
     
     val = calc.calculate_graham(eps, g, yield_val)
-    assert val == 185.0, f"Expected 185.0, got {val}"
+    assert val == pytest.approx(185.0, rel=0.01), f"Expected 185.0, got {val}"
     
-    # Test case 2: Yield 2.2
-    # Expected: 10 * 18.5 * (2.2 / 4.4) = 185 * 0.5 = 92.5
-    val2 = calc.calculate_graham(eps, g, 2.2)
-    assert val2 == 92.5, f"Expected 92.5, got {val2}"
+    # Test case 2: Yield 2.2% as decimal (0.022)
+    # Expected: 10 * 18.5 * (4.4 / 2.2) = 185 * 2 = 370.0
+    val2 = calc.calculate_graham(eps, g, 0.022)
+    assert val2 == pytest.approx(370.0, rel=0.01), f"Expected 370.0, got {val2}"

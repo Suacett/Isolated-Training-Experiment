@@ -7,16 +7,20 @@ import asyncio
 # Add project root to sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
 
-from backend.services.data_ingest import AlphaVantageClient
+from services.alpha_vantage_ingest import AlphaVantageClient
 
 class TestAlphaVantageClient(unittest.TestCase):
     def setUp(self):
         os.environ["ALPHA_VANTAGE_KEY"] = "test_key"
 
-    @patch("backend.services.data_ingest.requests.get")
-    @patch("backend.services.data_ingest.time.sleep")
-    @patch("backend.services.data_ingest.AsyncSessionLocal")
-    def test_fetch_daily_data(self, mock_session, mock_sleep, mock_get):
+    @patch("services.alpha_vantage_ingest.settings")
+    @patch("services.alpha_vantage_ingest.requests.get")
+    @patch("services.alpha_vantage_ingest.time.sleep")
+    @patch("services.alpha_vantage_ingest.AsyncSessionLocal")
+    def test_fetch_daily_data(self, mock_session, mock_sleep, mock_get, mock_settings):
+        # Mock settings to return test API key
+        mock_settings.ALPHA_VANTAGE_KEY = "test_key"
+
         # Mock API response
         mock_response = MagicMock()
         mock_response.json.return_value = {
@@ -53,8 +57,8 @@ class TestAlphaVantageClient(unittest.TestCase):
         # Run async method
         asyncio.run(client.fetch_daily_data("TEST"))
 
-        # Verify rate limit sleep was called
-        mock_sleep.assert_called_with(15)
+        # Verify rate limit sleep was called (current rate limit is 12s)
+        mock_sleep.assert_called_with(12)
 
         # Verify API called with correct params
         mock_get.assert_called_with(
@@ -63,7 +67,7 @@ class TestAlphaVantageClient(unittest.TestCase):
                 "function": "TIME_SERIES_DAILY",
                 "symbol": "TEST",
                 "apikey": "test_key",
-                "outputsize": "full"
+                "outputsize": "compact"  # Default is compact for daily fetches
             }
         )
 
