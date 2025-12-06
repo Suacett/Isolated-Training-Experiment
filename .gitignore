@@ -1,6 +1,7 @@
 # Secrets
 .env
 .env.local
+backend/secrets.json
 
 # Dependencies
 node_modules/
@@ -27,7 +28,7 @@ legacy/
 .coverage
 htmlcov/
 
-
+# legacy data
 legacy/
 .env
 __pycache__/
@@ -36,3 +37,9 @@ frontend/node_modules/
 backend/__pycache__/
 backend/venv/
 .git/
+GEMINI.md/
+INTEGRATION_COMPLETE.md
+CLAUDE.md
+IMPLEMENTATION_SUMMARY.md
+backend/models/lstm_model_backup.pth
+CLAUDE.md

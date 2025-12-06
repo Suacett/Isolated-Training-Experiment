@@ -11,9 +11,8 @@
 
 ## 2. Data Architecture
 - **Database:** PostgreSQL with TimescaleDB extension (running in Docker).
-- **Data Source:** Alpha Vantage (Free Tier).
-  - **Rate Limits:** STRICTLY enforce 5 calls/minute and 500 calls/day. Implement a queue/sleep system to prevent API bans.
-  - **Secrets:** API Keys must be loaded from `os.getenv("ALPHA_VANTAGE_KEY")`. NEVER commit keys.
+- **Data Source:** Alpaca Markets (Free Tier).
+  - **Secrets:** API Keys must be loaded from `Config` (via `config_loader.py`). NEVER commit keys.
 - **Stock List:** Refer to `stock_list.txt` or `stockList.csv` in the legacy files for the initial watchlist.
 
 ## 3. Refactoring Strategy
@@ -47,7 +46,7 @@
 
 **Phase 2: Data & Backend (Python/FastAPI)**
 - [ ] **Task 2.1:** Create `db_manager.py` with TimescaleDB schema for OHLCV data.
-- [ ] **Task 2.2:** Create `data_ingest.py` for Alpha Vantage (with rate limiting decorator).
+- [x] **Task 2.2:** Create `data_ingest.py` for Alpaca Markets (Stock & Crypto support).
 - [ ] **Task 2.3:** **Refactor Intrinsic Logic:** Port `1-produce_data.ipynb` to `IntrinsicValueCalculator` class.
 - [ ] **Task 2.4:** **Test Intrinsic Logic:** Verify output against `HistoricalPrices.csv`.
 - [ ] **Task 2.5:** **Refactor LSTM Logic:** Port `forecasting_backtest_Predictor.py` to `LSTMModel` class.
@@ -59,3 +58,43 @@
 - [ ] **Task 3.3:** Build `PredictionCard` component with Chart.js/Recharts.
 - [ ] **Task 3.4:** Build `LogViewer` component (streaming logs from backend).
 - [ ] **Task 3.5:** Connect Frontend to Backend API.
+
+---
+
+## 7. Model Training
+
+### Training Commands
+
+```bash
+# MAXIMUM DATA - All stocks, all history (recommended)
+docker exec proxmox_stock_backend python -m scripts.train_model_v5
+
+# After training, activate:
+docker exec proxmox_stock_backend cp /app/models/lstm_model_v5.pth /app/models/lstm_model_v2.pth
+docker exec proxmox_stock_backend cp /app/models/scaler_v5.pkl /app/models/scaler_v2.pkl
+docker compose restart backend
+```
+
+### Training Scripts
+
+| Script | Data | Memory | Description |
+|--------|------|--------|-------------|
+| `train_model_v5.py` | ALL | Streaming | Uses disk memmap - handles unlimited data |
+| `train_model_v4.py` | 200 | ~8GB | RAM-based, may OOM on large datasets |
+| `train_model_v3.py` | 100 | ~4GB | Legacy, fixed stock count |
+
+### Accuracy Results (2025-12-05)
+
+| Model | SPY | AAPL | AMD | Bias | Notes |
+|-------|-----|------|-----|------|-------|
+| **v6 (Clean Data)** | **54.0%** | **51.1%** | **50.1%** | **+8% (Bullish)** | **REALISTIC** - No duplicate data |
+| v5 (Dirty Data) | 46% | 68%* | 69%* | -45% (Bearish) | *Inflated by duplicates (predicting flat) |
+| v3 (Legacy) | 54% | 37% | 40% | N/A | Good for indices only |
+
+### Multi-API Key Support
+
+Alpha Vantage supports multiple keys for higher throughput:
+```bash
+# In .env
+ALPHA_VANTAGE_KEYS=key1,key2,key3,key4
+```

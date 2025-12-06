@@ -9,3 +9,10 @@ scikit-learn
 python-dotenv
 requests
 asyncpg
+greenlet
+pytest
+httpx
+sec-edgar-downloader
+yfinance
+lxml
+html5lib
