@@ -1,93 +1,141 @@
 import { useState, useEffect } from "react";
-import { X, CheckCircle2, XCircle } from "lucide-react";
-
-type DataSource = "alpaca" | "alpha_vantage";
+import { X, CheckCircle2, XCircle, Cpu, RefreshCw, FlaskConical, AlertTriangle } from "lucide-react";
+import { useToast } from "./Toast";
 
 interface SetupModalProps {
     onClose?: () => void;
 }
 
+interface AIStatus {
+    model_loaded: boolean;
+    model_info: {
+        type: string;
+        input_features: number;
+        hidden_dim: number;
+        horizons: string[];
+    } | null;
+    scaler_loaded: boolean;
+    device: string;
+    ready_for_predictions: boolean;
+}
+
+// Playground Toggle Component
+function PlaygroundToggle() {
+    const [enabled, setEnabled] = useState(false);
+    const [loading, setLoading] = useState(true);
+    const [toggling, setToggling] = useState(false);
+    const { showToast } = useToast();
+
+    useEffect(() => {
+        fetch("http://localhost:8000/settings/playground")
+            .then(res => res.json())
+            .then(data => {
+                setEnabled(data.enabled);
+                setLoading(false);
+            })
+            .catch(() => setLoading(false));
+    }, []);
+
+    const handleToggle = async () => {
+        setToggling(true);
+        try {
+            const res = await fetch(`http://localhost:8000/settings/playground?enabled=${!enabled}`, {
+                method: "POST"
+            });
+            const data = await res.json();
+            setEnabled(data.enabled);
+            showToast(data.enabled ? "Model Playground Enabled" : "Model Playground Disabled", "success");
+        } catch (e) {
+            console.error("Failed to toggle playground:", e);
+            showToast("Failed to toggle playground", "error");
+        } finally {
+            setToggling(false);
+        }
+    };
+
+    if (loading) return null;
+
+    return (
+        <div className="bg-amber-900/20 border border-amber-700/50 rounded-lg p-4 mb-4">
+            <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                    <FlaskConical size={20} className="text-amber-400" />
+                    <span className="text-white font-medium">Model Playground</span>
+                </div>
+                <button
+                    onClick={handleToggle}
+                    disabled={toggling}
+                    className={`relative w-14 h-7 rounded-full transition-colors flex-shrink-0 ${enabled ? "bg-amber-500" : "bg-zinc-700"
+                        }`}
+                >
+                    <span
+                        className={`absolute top-0.5 left-0.5 w-6 h-6 bg-white rounded-full transition-all shadow-sm ${enabled ? "translate-x-7" : "translate-x-0"
+                            }`}
+                    />
+                </button>
+            </div>
+            <p className="text-xs text-amber-400/70 flex items-start gap-1">
+                <AlertTriangle size={12} className="mt-0.5 flex-shrink-0" />
+                Loads all AI models for comparison. May use 4-8GB VRAM/RAM. Setting persists across restarts.
+            </p>
+            {enabled && (
+                <p className="text-xs text-emerald-400 mt-2">
+                    ✓ Models will load when you open the Playground
+                </p>
+            )}
+        </div>
+    );
+}
+
 export default function SetupModal({ onClose }: SetupModalProps) {
-    const [dataSource, setDataSource] = useState<DataSource>("alpaca");
-    const [alpacaApiKey, setAlpacaApiKey] = useState("");
-    const [alpacaSecretKey, setAlpacaSecretKey] = useState("");
     const [alphaVantageKey, setAlphaVantageKey] = useState("");
     const [loading, setLoading] = useState(false);
     const [resetting, setResetting] = useState(false);
-    const [status, setStatus] = useState<"idle" | "success" | "error">("idle");
-    const [message, setMessage] = useState("");
-    const [keyStatus, setKeyStatus] = useState({ alpaca: false, alpha_vantage: false });
+    const [keyStatus, setKeyStatus] = useState({ alpha_vantage: false });
+    const [aiStatus, setAIStatus] = useState<AIStatus | null>(null);
+    const { showToast } = useToast();
 
     useEffect(() => {
+        // Fetch system status
         fetch("http://localhost:8000/status")
             .then(res => res.json())
             .then(data => {
                 setKeyStatus({
-                    alpaca: data.alpaca_configured,
                     alpha_vantage: data.alpha_vantage_configured
                 });
             })
             .catch(console.error);
-    }, []);
 
-    const isFormValid = () => {
-        if (dataSource === "alpaca") {
-            return alpacaApiKey.trim() !== "" && alpacaSecretKey.trim() !== "";
-        } else {
-            return alphaVantageKey.trim() !== "";
-        }
-    };
+        // Fetch AI status
+        fetch("http://localhost:8000/status/ai")
+            .then(res => res.json())
+            .then(data => setAIStatus(data))
+            .catch(console.error);
+    }, []);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!isFormValid()) return;
+        if (!alphaVantageKey.trim()) return;
 
         setLoading(true);
-        setStatus("idle");
-        setMessage("");
 
         try {
-            const payload: Record<string, string | null> = {
-                ALPACA_API_KEY: null,
-                ALPACA_SECRET_KEY: null,
-                ALPHA_VANTAGE_KEY: null,
-            };
-
-            if (dataSource === "alpaca") {
-                payload.ALPACA_API_KEY = alpacaApiKey;
-                payload.ALPACA_SECRET_KEY = alpacaSecretKey;
-            } else {
-                payload.ALPHA_VANTAGE_KEY = alphaVantageKey;
-            }
-
             const res = await fetch("http://localhost:8000/settings/keys", {
                 method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify(payload),
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ ALPHA_VANTAGE_KEY: alphaVantageKey }),
             });
 
             if (res.ok) {
-                setStatus("success");
-                setMessage("Configuration saved successfully!");
-                // Update status locally
-                if (dataSource === "alpaca") setKeyStatus(prev => ({ ...prev, alpaca: true }));
-                else setKeyStatus(prev => ({ ...prev, alpha_vantage: true }));
-
-                setTimeout(() => {
-                    if (onClose) {
-                        onClose();
-                    }
-                }, 1500);
+                showToast("Settings saved successfully!", "success");
+                setKeyStatus(prev => ({ ...prev, alpha_vantage: true }));
+                setTimeout(() => onClose?.(), 1500);
             } else {
-                setStatus("error");
-                setMessage("Failed to save keys. Please check your input.");
+                showToast("Failed to save settings.", "error");
             }
         } catch (error) {
             console.error(error);
-            setStatus("error");
-            setMessage("Network error occurred.");
+            showToast("Network error occurred.", "error");
         } finally {
             setLoading(false);
         }
@@ -95,7 +143,7 @@ export default function SetupModal({ onClose }: SetupModalProps) {
 
     return (
         <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-80 z-50">
-            <div className="bg-gray-900 border border-gray-700 p-8 rounded-xl shadow-2xl max-w-md w-full relative">
+            <div className="bg-gray-900 border border-gray-700 p-8 rounded-xl shadow-2xl max-w-lg w-full relative">
                 {onClose && (
                     <button
                         onClick={onClose}
@@ -107,145 +155,186 @@ export default function SetupModal({ onClose }: SetupModalProps) {
                 <h2 className="text-2xl font-bold text-white mb-4 text-center">
                     {onClose ? "Settings" : "Welcome"}
                 </h2>
-                <p className="text-gray-400 mb-6 text-center">
-                    Configure your data source to begin.
-                </p>
 
-                {/* Data Source Selector */}
-                <div className="flex gap-2 mb-6">
-                    <button
-                        type="button"
-                        onClick={() => setDataSource("alpaca")}
-                        className={`flex-1 py-2 px-4 rounded-lg border transition-colors flex items-center justify-center gap-2 ${dataSource === "alpaca"
-                            ? "bg-emerald-600 border-emerald-500 text-white"
-                            : "bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-600"
-                            }`}
-                    >
-                        Alpaca Markets
-                        {keyStatus.alpaca ? <CheckCircle2 size={16} className="text-white" /> : null}
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => setDataSource("alpha_vantage")}
-                        className={`flex-1 py-2 px-4 rounded-lg border transition-colors flex items-center justify-center gap-2 ${dataSource === "alpha_vantage"
-                            ? "bg-emerald-600 border-emerald-500 text-white"
-                            : "bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-600"
-                            }`}
-                    >
-                        Alpha Vantage
-                        {keyStatus.alpha_vantage ? <CheckCircle2 size={16} className="text-white" /> : null}
-                    </button>
+                {/* AI Model Status Card */}
+                <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4 mb-6">
+                    <div className="flex items-center gap-2 mb-3">
+                        <Cpu size={20} className="text-blue-400" />
+                        <span className="text-white font-medium">AI Model Status</span>
+                    </div>
+
+                    {aiStatus ? (
+                        <div className="space-y-2 text-sm">
+                            <div className="flex justify-between">
+                                <span className="text-gray-400">Model</span>
+                                <span className={aiStatus.model_loaded ? "text-emerald-400" : "text-red-400"}>
+                                    {aiStatus.model_loaded ? `${aiStatus.model_info?.type} (${aiStatus.model_info?.input_features} features)` : "Not Loaded"}
+                                </span>
+                            </div>
+                            <div className="flex justify-between">
+                                <span className="text-gray-400">Scaler</span>
+                                <span className={aiStatus.scaler_loaded ? "text-emerald-400" : "text-red-400"}>
+                                    {aiStatus.scaler_loaded ? "Loaded" : "Not Loaded"}
+                                </span>
+                            </div>
+                            <div className="flex justify-between">
+                                <span className="text-gray-400">Device</span>
+                                <span className="text-blue-400">{aiStatus.device}</span>
+                            </div>
+                            <div className="flex justify-between">
+                                <span className="text-gray-400">Ready</span>
+                                <span className={aiStatus.ready_for_predictions ? "text-emerald-400" : "text-yellow-400"}>
+                                    {aiStatus.ready_for_predictions ? "✓ Ready for Predictions" : "⚠ Missing Components"}
+                                </span>
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="text-gray-500 text-sm">Loading...</div>
+                    )}
                 </div>
 
+                {/* Data Source Status */}
+                <div className="bg-blue-900/30 border border-blue-700/50 rounded-lg px-4 py-3 mb-4 flex items-center justify-between">
+                    <span className="text-blue-300">📊 Yahoo Finance (Data Source)</span>
+                    <span className="text-xs text-emerald-400 flex items-center gap-1">
+                        <CheckCircle2 size={12} /> Active (No API Key Needed)
+                    </span>
+                </div>
+
+                {/* Data Management */}
+                <div className="bg-zinc-800/50 border border-zinc-700 rounded-lg p-4 mb-6">
+                    <div className="flex items-center gap-2 mb-3">
+                        <RefreshCw size={20} className="text-purple-400" />
+                        <span className="text-white font-medium">Data Management</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                        <button
+                            onClick={async () => {
+                                // Non-blocking confirmation using toast
+                                showToast("Starting Daily Sync...", "info");
+                                setLoading(true);
+                                try {
+                                    const watchlistRes = await fetch("http://localhost:8000/stocks/");
+                                    const watchlist = await watchlistRes.json();
+
+                                    let successCount = 0;
+                                    let errorCount = 0;
+                                    for (const ticker of watchlist) {
+                                        try {
+                                            const res = await fetch(`http://localhost:8000/ingest/${ticker}?mode=daily`, { method: "POST" });
+                                            if (res.ok) {
+                                                successCount++;
+                                            } else {
+                                                const errData = await res.json();
+                                                console.error(`Failed to sync ${ticker}:`, errData);
+                                                errorCount++;
+                                            }
+                                        } catch (e) {
+                                            console.error(`Failed to sync ${ticker}`, e);
+                                            errorCount++;
+                                        }
+                                    }
+                                    if (successCount > 0) {
+                                        showToast(`Synced ${successCount}/${watchlist.length} assets (Daily).${errorCount > 0 ? ` ${errorCount} failed.` : ""}`, errorCount === 0 ? "success" : "warning");
+                                    } else {
+                                        showToast(`Failed to sync all assets. Check console.`, "error");
+                                    }
+                                } catch (e) {
+                                    showToast("Failed to sync data.", "error");
+                                } finally {
+                                    setLoading(false);
+                                }
+                            }}
+                            disabled={loading}
+                            className="bg-zinc-700 hover:bg-zinc-600 text-white text-sm font-medium py-2 px-3 rounded-lg transition-colors flex items-center justify-center gap-2"
+                        >
+                            {loading ? <RefreshCw className="animate-spin" size={14} /> : <RefreshCw size={14} />}
+                            Sync Daily
+                        </button>
+
+                        <button
+                            onClick={async () => {
+                                showToast("Starting Full Sync (1980-Now)... This may take a moment.", "info");
+                                setLoading(true);
+                                try {
+                                    // Use the new backend bulk endpoint
+                                    const res = await fetch("http://localhost:8000/ingest/all?mode=full", { method: "POST" });
+
+                                    if (res.ok) {
+                                        const data = await res.json();
+                                        const successCount = data.predictions ? data.predictions.length : 0;
+                                        const backfillCount = data.backfills ? data.backfills.length : 0;
+                                        showToast(`Sync Complete! Processed ${successCount} assets with ${backfillCount} historical backfills.`, "success");
+                                    } else {
+                                        const errData = await res.json();
+                                        console.error("Bulk sync failed:", errData);
+                                        showToast(`Failed to sync assets: ${errData.detail || "Unknown error"}`, "error");
+                                    }
+                                } catch (e) {
+                                    console.error("Bulk sync network error:", e);
+                                    showToast("Failed to connect to sync service.", "error");
+                                } finally {
+                                    setLoading(false);
+                                }
+                            }}
+                            disabled={loading}
+                            className="bg-zinc-700 hover:bg-zinc-600 text-white text-sm font-medium py-2 px-3 rounded-lg transition-colors flex items-center justify-center gap-2"
+                        >
+                            {loading ? <RefreshCw className="animate-spin" size={14} /> : <RefreshCw size={14} />}
+                            Sync Full
+                        </button>
+                    </div>
+                    <p className="text-xs text-zinc-500 mt-2 flex items-start gap-1">
+                        <AlertTriangle size={12} className="mt-0.5 flex-shrink-0 text-amber-500" />
+                        <span className="text-amber-500/80">Warning:</span> Full sync fetches deep history (1980+) and generates thousands of predictions. This process may take several minutes.
+                    </p>
+                </div>
+
+                {/* Model Playground Toggle */}
+                <PlaygroundToggle />
+
+                {/* Alpha Vantage for Intrinsic Value */}
                 <form onSubmit={handleSubmit} className="space-y-4">
-                    {dataSource === "alpaca" ? (
-                        <>
-                            <div>
-                                <div className="flex items-center justify-between mb-1">
-                                    <label className="block text-sm font-medium text-gray-400">
-                                        Alpaca Key ID
-                                    </label>
-                                    {keyStatus.alpaca ? (
-                                        <span className="text-xs text-emerald-500 flex items-center gap-1">
-                                            <CheckCircle2 size={12} /> Active
-                                        </span>
-                                    ) : (
-                                        <span className="text-xs text-red-500 flex items-center gap-1">
-                                            <XCircle size={12} /> Not Configured
-                                        </span>
-                                    )}
-                                </div>
-                                <input
-                                    type="text"
-                                    value={alpacaApiKey}
-                                    onChange={(e) => setAlpacaApiKey(e.target.value)}
-                                    placeholder="PK..."
-                                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                                    required
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-400 mb-1">
-                                    Alpaca Secret Key
-                                </label>
-                                <input
-                                    type="password"
-                                    value={alpacaSecretKey}
-                                    onChange={(e) => setAlpacaSecretKey(e.target.value)}
-                                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                                    required
-                                />
-                            </div>
-                            <p className="text-xs text-gray-500">
-                                Get your API keys from{" "}
-                                <a
-                                    href="https://app.alpaca.markets/paper/dashboard/overview"
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="text-emerald-500 hover:underline"
-                                >
-                                    Alpaca Dashboard
-                                </a>
-                                . Supports stocks and crypto.
-                            </p>
-                        </>
-                    ) : (
-                        <>
-                            <div>
-                                <div className="flex items-center justify-between mb-1">
-                                    <label className="block text-sm font-medium text-gray-400">
-                                        Alpha Vantage API Key
-                                    </label>
-                                    {keyStatus.alpha_vantage ? (
-                                        <span className="text-xs text-emerald-500 flex items-center gap-1">
-                                            <CheckCircle2 size={12} /> Active
-                                        </span>
-                                    ) : (
-                                        <span className="text-xs text-red-500 flex items-center gap-1">
-                                            <XCircle size={12} /> Not Configured
-                                        </span>
-                                    )}
-                                </div>
-                                <input
-                                    type="text"
-                                    value={alphaVantageKey}
-                                    onChange={(e) => setAlphaVantageKey(e.target.value)}
-                                    placeholder="Your API key"
-                                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                                    required
-                                />
-                            </div>
-                            <p className="text-xs text-gray-500">
-                                Get a free API key from{" "}
-                                <a
-                                    href="https://www.alphavantage.co/support/#api-key"
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="text-emerald-500 hover:underline"
-                                >
-                                    Alpha Vantage
-                                </a>
-                                . Free tier: 5 calls/min, 500 calls/day.
-                            </p>
-                        </>
-                    )}
-
-                    {status === "error" && (
-                        <div className="text-red-500 text-sm text-center bg-red-500/10 p-2 rounded">
-                            {message}
+                    <div>
+                        <div className="flex items-center justify-between mb-1">
+                            <label className="block text-sm font-medium text-gray-400">
+                                Alpha Vantage API Key (for Intrinsic Value)
+                            </label>
+                            {keyStatus.alpha_vantage ? (
+                                <span className="text-xs text-emerald-500 flex items-center gap-1">
+                                    <CheckCircle2 size={12} /> Active
+                                </span>
+                            ) : (
+                                <span className="text-xs text-yellow-500 flex items-center gap-1">
+                                    Optional
+                                </span>
+                            )}
                         </div>
-                    )}
-
-                    {status === "success" && (
-                        <div className="text-emerald-500 text-sm text-center bg-emerald-500/10 p-2 rounded">
-                            {message}
-                        </div>
-                    )}
+                        <input
+                            type="text"
+                            value={alphaVantageKey}
+                            onChange={(e) => setAlphaVantageKey(e.target.value)}
+                            placeholder="Your Alpha Vantage API key"
+                            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                        />
+                    </div>
+                    <p className="text-xs text-gray-500">
+                        Get a free API key from{" "}
+                        <a
+                            href="https://www.alphavantage.co/support/#api-key"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-emerald-500 hover:underline"
+                        >
+                            Alpha Vantage
+                        </a>
+                        . Required for EPS data and intrinsic value calculations.
+                    </p>
 
                     <div className="flex flex-col gap-3">
                         <button
                             type="submit"
-                            disabled={loading || resetting || !isFormValid()}
+                            disabled={loading || resetting}
                             className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                         >
                             {loading && <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
@@ -255,33 +344,27 @@ export default function SetupModal({ onClose }: SetupModalProps) {
                         <button
                             type="button"
                             onClick={async () => {
-                                if (!confirm("Are you sure you want to reset all API keys? This cannot be undone.")) return;
+                                if (!confirm("Are you sure you want to reset all settings?")) return;
                                 setResetting(true);
-                                setStatus("idle");
-                                setMessage("");
 
                                 try {
                                     const res = await fetch("http://localhost:8000/settings/keys", {
                                         method: "DELETE",
                                     });
                                     if (res.ok) {
-                                        setAlpacaApiKey("");
-                                        setAlpacaSecretKey("");
                                         setAlphaVantageKey("");
-                                        setStatus("success");
-                                        setMessage("Keys Reset");
+                                        setKeyStatus({ alpha_vantage: false });
+                                        showToast("Settings Reset", "success");
                                         setTimeout(() => {
                                             if (onClose) onClose();
                                             else window.location.reload();
                                         }, 1500);
                                     } else {
-                                        setStatus("error");
-                                        setMessage("Failed to reset keys.");
+                                        showToast("Failed to reset settings.", "error");
                                     }
                                 } catch (error) {
                                     console.error(error);
-                                    setStatus("error");
-                                    setMessage("Network error occurred.");
+                                    showToast("Network error occurred.", "error");
                                 } finally {
                                     setResetting(false);
                                 }
@@ -290,7 +373,7 @@ export default function SetupModal({ onClose }: SetupModalProps) {
                             className="w-full bg-red-900/30 hover:bg-red-900/50 border border-red-900/50 text-red-400 font-bold py-2 px-4 rounded-lg transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
                         >
                             {resetting && <div className="w-4 h-4 border-2 border-red-400 border-t-transparent rounded-full animate-spin" />}
-                            {resetting ? "Resetting..." : "Reset Keys"}
+                            {resetting ? "Resetting..." : "Reset Settings"}
                         </button>
                     </div>
                 </form>

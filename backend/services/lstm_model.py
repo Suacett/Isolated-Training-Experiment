@@ -11,17 +11,20 @@ def get_device() -> torch.device:
 
 class MCDropout(nn.Module):
     """
-    Monte Carlo Dropout: Applies dropout even during inference (eval mode).
-    This allows estimating uncertainty by running multiple forward passes.
-    Ported from legacy Keras MCDropout layer.
+    Monte Carlo Dropout: Applies dropout during training.
+    For inference:
+    - If model.train(), applies dropout (standard training)
+    - If model.eval(), applies dropout ONLY if force_dropout is True
     """
     def __init__(self, p: float = 0.3):
         super().__init__()
         self.p = p
+        self.force_dropout = False
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # Always apply dropout (training=True) for Monte Carlo estimation
-        return F.dropout(x, p=self.p, training=True)
+        # Apply dropout if training OR if force_dropout is enabled (for MC sampling)
+        active = self.training or self.force_dropout
+        return F.dropout(x, p=self.p, training=active)
 
 
 class LSTMModel(nn.Module):
@@ -46,7 +49,7 @@ class LSTMModel(nn.Module):
     # Legacy constants from forecasting_backtest_Predictor_v2.py
     CONFIDENCE_THRESHOLD = 0.70
     CONFIDENCE_Z = 1.5
-    MC_SAMPLES = 30  # Number of forward passes for uncertainty estimation
+    MC_SAMPLES = 50  # Number of forward passes for uncertainty estimation (legacy: 50)
 
     def __init__(
         self,
@@ -157,7 +160,12 @@ class LSTMModel(nn.Module):
         if x.dim() == 2:
             x = x.unsqueeze(0)
 
-        # Single forward pass (MC dropout still active)
+        # Single forward pass (Deterministic if eval mode)
+        self.eval()
+        # Ensure dropout is off for single prediction
+        self.mc_dropout1.force_dropout = False
+        self.mc_dropout2.force_dropout = False
+        
         with torch.no_grad():
             output = self.forward(x)
 
@@ -181,6 +189,10 @@ class LSTMModel(nn.Module):
         if x.dim() == 2:
             x = x.unsqueeze(0)
 
+        self.eval()
+        self.mc_dropout1.force_dropout = False
+        self.mc_dropout2.force_dropout = False
+        
         with torch.no_grad():
             output = self.forward(x)
 
@@ -216,19 +228,37 @@ class LSTMModel(nn.Module):
         if x.dim() == 2:
             x = x.unsqueeze(0)
 
+        # 1. Deterministic Prediction (Dropout OFF)
+        self.eval()
+        self.mc_dropout1.force_dropout = False
+        self.mc_dropout2.force_dropout = False
+        with torch.no_grad():
+            deterministic_pred = self.forward(x) # (batch, output_dim)
+
+        # 2. Uncertainty Estimation (Dropout ON)
+        self.mc_dropout1.force_dropout = True
+        self.mc_dropout2.force_dropout = True
+
         # Collect MC samples
         predictions = []
         with torch.no_grad():
             for _ in range(n_samples):
                 output = self.forward(x)
                 predictions.append(output)
+        
+        # Disable MC Dropout after sampling
+        self.mc_dropout1.force_dropout = False
+        self.mc_dropout2.force_dropout = False
 
         # Stack: (n_samples, batch, output_dim)
         predictions = torch.stack(predictions, dim=0)
 
         # Compute statistics
-        mean_pred = predictions.mean(dim=0)  # (batch, output_dim)
+        # mean_pred = predictions.mean(dim=0)  # OLD: Mean of samples (Noisy)
         std_pred = predictions.std(dim=0)    # (batch, output_dim)
+
+        # Use deterministic prediction as the primary value
+        mean_pred = deterministic_pred
 
         # Adjusted prediction (legacy: pred - CONFIDENCE_Z * std)
         adjusted_pred = mean_pred - self.CONFIDENCE_Z * std_pred
@@ -241,8 +271,8 @@ class LSTMModel(nn.Module):
         confidence = 0.5 * (1 + torch.erf(z_score / np.sqrt(2)))
 
         return {
-            "prediction": mean_pred[:, 0].cpu().numpy(),  # 1-day forecast
-            "prediction_all_horizons": mean_pred.cpu().numpy(),  # All horizons
+            "prediction": mean_pred[:, 0].cpu().numpy(),  # 1-day forecast (Deterministic)
+            "prediction_all_horizons": mean_pred.cpu().numpy(),
             "std": std_pred[:, 0].cpu().numpy(),
             "adjusted_prediction": adjusted_pred[:, 0].cpu().numpy(),
             "confidence": confidence[:, 0].cpu().numpy(),

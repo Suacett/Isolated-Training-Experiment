@@ -51,11 +51,18 @@ def compute_technical_features(df: pd.DataFrame) -> pd.DataFrame:
     df["YesterdayCloseLogR"] = df["YesterdayCloseLogR"].replace([np.inf, -np.inf], np.nan)
 
     # === MOVING AVERAGES (5 features) ===
-    df["MA10"] = df["close"].rolling(window=10).mean()
-    df["MA20"] = df["close"].rolling(window=20).mean()
-    df["MA30"] = df["close"].rolling(window=30).mean()
-    df["EMA10"] = df["close"].ewm(span=10, adjust=False).mean()
-    df["EMA30"] = df["close"].ewm(span=30, adjust=False).mean()
+    # Convert to ratios for stationarity (price/MA makes it scale-independent)
+    ma10_raw = df["close"].rolling(window=10).mean()
+    ma20_raw = df["close"].rolling(window=20).mean()
+    ma30_raw = df["close"].rolling(window=30).mean()
+    ema10_raw = df["close"].ewm(span=10, adjust=False).mean()
+    ema30_raw = df["close"].ewm(span=30, adjust=False).mean()
+
+    df["MA10"] = df["close"] / ma10_raw
+    df["MA20"] = df["close"] / ma20_raw
+    df["MA30"] = df["close"] / ma30_raw
+    df["EMA10"] = df["close"] / ema10_raw
+    df["EMA30"] = df["close"] / ema30_raw
 
     # === TIME FEATURES (3 features) ===
     df["DayOfWeek"] = df["date"].dt.weekday         # 0 = Monday, 6 = Sunday
@@ -78,10 +85,14 @@ def compute_technical_features(df: pd.DataFrame) -> pd.DataFrame:
     df["MACD_Signal"] = df["MACD"].ewm(span=9, adjust=False).mean()
 
     # === BOLLINGER BANDS (2 features) ===
+    # Convert to ratios for stationarity
     ma20 = df["close"].rolling(window=20).mean()
     std20 = df["close"].rolling(window=20).std()
-    df["BollingerUpper"] = ma20 + 2 * std20
-    df["BollingerLower"] = ma20 - 2 * std20
+    bollinger_upper_raw = ma20 + 2 * std20
+    bollinger_lower_raw = ma20 - 2 * std20
+
+    df["BollingerUpper"] = df["close"] / bollinger_upper_raw
+    df["BollingerLower"] = df["close"] / bollinger_lower_raw
 
     # === ROLLING VOLATILITY (3 features) ===
     df["Volatility_10"] = df["close"].pct_change().rolling(window=10).std()

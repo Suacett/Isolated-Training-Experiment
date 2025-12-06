@@ -27,6 +27,8 @@ class Watchlist(Base):
     __tablename__ = "watchlist"
     __table_args__ = {'extend_existing': True}
     ticker = Column(String, primary_key=True)
+    is_favorite = Column(Boolean, default=True)  # Favorites get Alpha Vantage calls
+    added_at = Column(DateTime, default=datetime.now)
 
 class Prediction(Base):
     __tablename__ = "predictions"
@@ -61,6 +63,17 @@ class SentimentData(Base):
     sentiment = Column(Float)
     num_articles = Column(Integer)
 
+class CachedIntrinsicValue(Base):
+    __tablename__ = "cached_intrinsic_values"
+    __table_args__ = {'extend_existing': True}
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ticker = Column(String, unique=True)
+    value = Column(Float)
+    last_updated = Column(DateTime)
+    eps = Column(Float)
+    growth_rate = Column(Float)
+    bond_yield = Column(Float)
+
 async def get_latest_close(ticker: str):
     async with AsyncSessionLocal() as session:
         result = await session.execute(
@@ -70,6 +83,57 @@ async def get_latest_close(ticker: str):
             .limit(1)
         )
         return result.scalar_one_or_none()
+
+async def get_latest_date(ticker: str):
+    """Get the most recent data date for a ticker"""
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(StockPrice.timestamp)
+            .where(StockPrice.ticker == ticker)
+            .order_by(desc(StockPrice.timestamp))
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+async def get_cached_intrinsic_value(ticker: str):
+    """Get cached intrinsic value for a ticker"""
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(CachedIntrinsicValue).where(CachedIntrinsicValue.ticker == ticker)
+        )
+        return result.scalar_one_or_none()
+
+async def get_all_cached_intrinsic_values():
+    """Get all cached intrinsic values in a single query for dashboard efficiency"""
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(CachedIntrinsicValue))
+        rows = result.scalars().all()
+        # Return as dict for O(1) lookup
+        return {row.ticker: row.value for row in rows}
+
+async def save_cached_intrinsic_value(ticker: str, value: float, eps: float, growth_rate: float, bond_yield: float):
+    """Save or update cached intrinsic value"""
+    async with AsyncSessionLocal() as session:
+        stmt = insert(CachedIntrinsicValue).values(
+            ticker=ticker,
+            value=value,
+            last_updated=datetime.now(),
+            eps=eps,
+            growth_rate=growth_rate,
+            bond_yield=bond_yield
+        )
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[CachedIntrinsicValue.ticker],
+            set_={
+                "value": stmt.excluded.value,
+                "last_updated": stmt.excluded.last_updated,
+                "eps": stmt.excluded.eps,
+                "growth_rate": stmt.excluded.growth_rate,
+                "bond_yield": stmt.excluded.bond_yield
+            }
+        )
+        await session.execute(stmt)
+        await session.commit()
 
 async def get_unique_tickers():
     async with AsyncSessionLocal() as session:
@@ -88,9 +152,25 @@ async def get_historical_data(ticker: str, limit: int = 60):
         # Return chronological
         return data[::-1]
 
-async def add_watchlist_item(ticker: str):
+async def get_historical_data_range(ticker: str, start_date: datetime, end_date: datetime):
+    """Get historical data for a ticker within a date range"""
     async with AsyncSessionLocal() as session:
-        stmt = insert(Watchlist).values(ticker=ticker).on_conflict_do_nothing()
+        result = await session.execute(
+            select(StockPrice)
+            .where(StockPrice.ticker == ticker)
+            .where(StockPrice.timestamp >= start_date)
+            .where(StockPrice.timestamp <= end_date)
+            .order_by(StockPrice.timestamp)
+        )
+        return result.scalars().all()
+
+async def add_watchlist_item(ticker: str, is_favorite: bool = False):
+    async with AsyncSessionLocal() as session:
+        stmt = insert(Watchlist).values(
+            ticker=ticker,
+            is_favorite=is_favorite,
+            added_at=datetime.now()
+        ).on_conflict_do_nothing()
         await session.execute(stmt)
         await session.commit()
 
@@ -100,9 +180,38 @@ async def remove_watchlist_item(ticker: str):
         await session.commit()
 
 async def get_watchlist():
+    """Get all watchlist tickers (both favorites and non-favorites)"""
     async with AsyncSessionLocal() as session:
         result = await session.execute(select(Watchlist.ticker))
         return result.scalars().all()
+
+async def get_favorites():
+    """Get only favorite tickers (these get Alpha Vantage calls)"""
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Watchlist.ticker).where(Watchlist.is_favorite == True)
+        )
+        return result.scalars().all()
+
+async def set_favorite(ticker: str, is_favorite: bool):
+    """Toggle favorite status for a ticker"""
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Watchlist).where(Watchlist.ticker == ticker)
+        )
+        item = result.scalar_one_or_none()
+        if item:
+            item.is_favorite = is_favorite
+            await session.commit()
+            return True
+        return False
+
+async def get_watchlist_with_favorites():
+    """Get all watchlist items with their favorite status"""
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(Watchlist))
+        items = result.scalars().all()
+        return [{"ticker": item.ticker, "is_favorite": item.is_favorite} for item in items]
 
 async def save_prediction(
     ticker: str,
@@ -139,15 +248,18 @@ async def update_prediction_actual(prediction_id: int, actual_value: float, is_c
             prediction.is_correct = is_correct
             await session.commit()
 
-async def get_predictions_for_ticker(ticker: str, limit: int = 50):
-    """Get recent predictions for a ticker"""
+async def get_predictions_for_ticker(ticker: str, limit: int = 50, horizon: str = None):
+    """Get recent predictions for a ticker, optionally filtered by horizon"""
     async with AsyncSessionLocal() as session:
-        result = await session.execute(
-            select(Prediction)
-            .where(Prediction.ticker == ticker)
-            .order_by(desc(Prediction.prediction_date))
-            .limit(limit)
-        )
+        query = select(Prediction).where(Prediction.ticker == ticker)
+
+        # Filter by horizon if specified
+        if horizon:
+            query = query.where(Prediction.horizon == horizon)
+
+        query = query.order_by(desc(Prediction.prediction_date)).limit(limit)
+
+        result = await session.execute(query)
         return result.scalars().all()
 
 async def get_pending_predictions():
@@ -205,3 +317,20 @@ async def get_sentiment_data(ticker: str, start_date: datetime = None):
         query = query.order_by(SentimentData.date)
         result = await session.execute(query)
         return result.scalars().all()
+
+
+async def delete_stock_data(ticker: str):
+    """
+    Delete all data associated with a ticker:
+    - Stock Prices
+    - Predictions
+    - Insider Trades
+    - Sentiment Data
+    """
+    async with AsyncSessionLocal() as session:
+        # Delete from all tables
+        await session.execute(delete(StockPrice).where(StockPrice.ticker == ticker))
+        await session.execute(delete(Prediction).where(Prediction.ticker == ticker))
+        await session.execute(delete(InsiderTrade).where(InsiderTrade.ticker == ticker))
+        await session.execute(delete(SentimentData).where(SentimentData.ticker == ticker))
+        await session.commit()

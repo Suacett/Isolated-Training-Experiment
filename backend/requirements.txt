@@ -10,7 +10,9 @@ python-dotenv
 requests
 asyncpg
 greenlet
-alpaca-py
 pytest
 httpx
 sec-edgar-downloader
+yfinance
+lxml
+html5lib

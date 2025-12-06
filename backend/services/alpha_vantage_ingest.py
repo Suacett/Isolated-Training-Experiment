@@ -3,8 +3,12 @@ Alpha Vantage Data Client
 
 Provides stock data fetching as a backup to Alpaca.
 Note: Alpha Vantage has stricter rate limits (5 calls/min on free tier).
+
+Supports multiple API keys with automatic rotation when rate limits are hit.
+Set ALPHA_VANTAGE_KEYS as comma-separated keys, or ALPHA_VANTAGE_KEY for single key.
 """
 
+import os
 import time
 import requests
 from datetime import datetime
@@ -12,25 +16,74 @@ from typing import List, Optional
 from sqlalchemy.dialects.postgresql import insert
 from services.db import StockPrice, AsyncSessionLocal
 from utils.config_loader import settings
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class AlphaVantageClient:
     """
     Alpha Vantage data client for fetching historical stock data.
 
-    Note: Free tier limits:
+    Supports multiple API keys with automatic rotation.
+    
+    Note: Free tier limits per key:
     - 5 API calls per minute
     - 500 API calls per day
     """
 
     BASE_URL = "https://www.alphavantage.co/query"
-    RATE_LIMIT_DELAY = 15  # Seconds between calls (conservative for free tier)
+    RATE_LIMIT_DELAY = 12  # Seconds between calls (conservative for free tier)
 
     def __init__(self):
-        self.api_key = settings.ALPHA_VANTAGE_KEY
-
-        if not self.api_key:
-            raise ValueError("Alpha Vantage API key not found in settings")
+        # Support multiple API keys (comma-separated)
+        keys_str = os.getenv("ALPHA_VANTAGE_KEYS", "") or settings.ALPHA_VANTAGE_KEY or ""
+        
+        # Parse comma-separated keys
+        self.api_keys = [k.strip() for k in keys_str.split(",") if k.strip()]
+        
+        # Also add single key if separate
+        if settings.ALPHA_VANTAGE_KEY and settings.ALPHA_VANTAGE_KEY not in self.api_keys:
+            self.api_keys.append(settings.ALPHA_VANTAGE_KEY)
+        
+        if not self.api_keys:
+            raise ValueError("No Alpha Vantage API keys found. Set ALPHA_VANTAGE_KEY or ALPHA_VANTAGE_KEYS")
+        
+        self.current_key_index = 0
+        self.key_call_counts = {key: 0 for key in self.api_keys}
+        self.key_rate_limited = {key: False for key in self.api_keys}
+        
+        logger.info(f"[Alpha Vantage] Initialized with {len(self.api_keys)} API key(s)")
+    
+    @property
+    def api_key(self) -> str:
+        """Get the current active API key."""
+        return self.api_keys[self.current_key_index]
+    
+    def rotate_key(self) -> bool:
+        """
+        Rotate to the next API key.
+        Returns True if successfully rotated, False if all keys are rate limited.
+        """
+        # Find a non-rate-limited key
+        for _ in range(len(self.api_keys)):
+            self.current_key_index = (self.current_key_index + 1) % len(self.api_keys)
+            if not self.key_rate_limited[self.api_key]:
+                logger.info(f"[Alpha Vantage] Rotated to key {self.current_key_index + 1}/{len(self.api_keys)}")
+                return True
+        
+        # All keys are rate limited - reset and try again with delay
+        logger.warning("[Alpha Vantage] All API keys rate limited. Resetting...")
+        for key in self.api_keys:
+            self.key_rate_limited[key] = False
+        time.sleep(60)  # Wait a minute before retrying
+        return True
+    
+    def mark_rate_limited(self):
+        """Mark the current key as rate limited and rotate."""
+        self.key_rate_limited[self.api_key] = True
+        logger.warning(f"[Alpha Vantage] Key {self.current_key_index + 1} rate limited, rotating...")
+        self.rotate_key()
 
     async def fetch_daily_data(self, ticker: str) -> None:
         """
@@ -39,12 +92,11 @@ class AlphaVantageClient:
         Args:
             ticker: Stock symbol (e.g., "AAPL", "MSFT")
         """
-        print(f"[Alpha Vantage] Fetching data for {ticker}...")
+        logger.info(f"[Alpha Vantage] Fetching data for {ticker} with key {self.current_key_index + 1}...")
 
         params = {
             "function": "TIME_SERIES_DAILY",
             "symbol": ticker,
-            "apikey": self.api_key,
             "apikey": self.api_key,
             "outputsize": "compact"  # Get compact history (100 days) for free tier
         }
@@ -59,25 +111,27 @@ class AlphaVantageClient:
 
             # Check for API errors
             if "Error Message" in data:
-                print(f"[Alpha Vantage] API error for {ticker}: {data['Error Message']}")
+                logger.warning(f"[Alpha Vantage] API error for {ticker}: {data['Error Message']}")
                 return
 
             if "Note" in data:
-                print(f"[Alpha Vantage] Rate limit hit: {data['Note']}")
-                return
+                logger.warning(f"[Alpha Vantage] Rate limit hit: {data['Note']}")
+                self.mark_rate_limited()
+                # Retry with new key
+                return await self.fetch_daily_data(ticker)
 
             # Parse time series data
             time_series = data.get("Time Series (Daily)", {})
             if not time_series:
-                print(f"[Alpha Vantage] No data found for {ticker}")
+                logger.warning(f"[Alpha Vantage] No data found for {ticker}")
                 return
 
             await self._save_time_series(ticker, time_series)
 
         except requests.RequestException as e:
-            print(f"[Alpha Vantage] Request error for {ticker}: {e}")
+            logger.error(f"[Alpha Vantage] Request error for {ticker}: {e}")
         except Exception as e:
-            print(f"[Alpha Vantage] Exception fetching {ticker}: {e}")
+            logger.error(f"[Alpha Vantage] Exception fetching {ticker}: {e}")
 
     async def fetch_data(self, ticker: str) -> None:
         """Alias for fetch_daily_data for compatibility."""
@@ -96,7 +150,7 @@ class AlphaVantageClient:
         for ticker in tickers:
             await self.fetch_daily_data(ticker)
 
-        print(f"[Alpha Vantage] Completed fetch for {len(tickers)} tickers")
+        logger.info(f"[Alpha Vantage] Completed fetch for {len(tickers)} tickers")
 
     async def fetch_eps_data(self, ticker: str) -> Optional[dict]:
         """
@@ -109,7 +163,7 @@ class AlphaVantageClient:
         Returns:
             Dict with 'annual' and 'quarterly' EPS data, or None on error
         """
-        print(f"[Alpha Vantage] Fetching EPS data for {ticker}...")
+        logger.info(f"[Alpha Vantage] Fetching EPS data for {ticker} with key {self.current_key_index + 1}...")
 
         params = {
             "function": "EARNINGS",
@@ -126,12 +180,14 @@ class AlphaVantageClient:
             data = response.json()
 
             if "Error Message" in data:
-                print(f"[Alpha Vantage] API error for {ticker} EPS: {data['Error Message']}")
+                logger.warning(f"[Alpha Vantage] API error for {ticker} EPS: {data['Error Message']}")
                 return None
 
             if "Note" in data:
-                print(f"[Alpha Vantage] Rate limit hit: {data['Note']}")
-                return None
+                logger.warning(f"[Alpha Vantage] Rate limit hit: {data['Note']}")
+                self.mark_rate_limited()
+                # Retry with new key
+                return await self.fetch_eps_data(ticker)
 
             annual = data.get("annualEarnings", [])
             quarterly = data.get("quarterlyEarnings", [])
@@ -142,7 +198,7 @@ class AlphaVantageClient:
             }
 
         except requests.RequestException as e:
-            print(f"[Alpha Vantage] Request error for {ticker} EPS: {e}")
+            logger.error(f"[Alpha Vantage] Request error for {ticker} EPS: {e}")
             return None
         except Exception as e:
             print(f"[Alpha Vantage] Exception fetching EPS for {ticker}: {e}")

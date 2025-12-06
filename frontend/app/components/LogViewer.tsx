@@ -28,7 +28,7 @@ export default function LogViewer({ onClose }: LogViewerProps) {
         };
 
         fetchLogs();
-        const interval = setInterval(fetchLogs, 5000); // Poll every 5s
+        const interval = setInterval(fetchLogs, 2000); // Poll every 2s
 
         return () => clearInterval(interval);
     }, []);

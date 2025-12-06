@@ -1,12 +1,17 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import SetupModal from "./components/SetupModal";
 import AddAssetBar from "./components/AddAssetBar";
 import AssetTable, { Asset } from "./components/AssetTable";
 import DetailDrawer from "./components/DetailDrawer";
 import LogViewer from "./components/LogViewer";
-import { RefreshCw, Settings, Terminal } from "lucide-react";
+import DeleteConfirmationModal from "./components/DeleteConfirmationModal";
+import BrowseStocksModal from "./components/BrowseStocksModal";
+import { useToast } from "./components/Toast";
+import AIPredictionPanel from "./components/AIPredictionPanel";
+import ModelPlayground from "./components/ModelPlayground";
+import { RefreshCw, Settings, Terminal, Brain, FlaskConical, Grid, Star } from "lucide-react";
 
 const API_BASE = "http://localhost:8000";
 
@@ -19,18 +24,44 @@ interface DashboardItem {
   intrinsic_value?: number;
   accuracy?: boolean;
   source?: string;
+  is_favorite?: boolean;
+}
+
+interface WatchlistItem {
+  ticker: string;
+  is_favorite: boolean;
 }
 
 export default function Home() {
   const [configured, setConfigured] = useState<boolean | null>(null);
   const [isSetupOpen, setIsSetupOpen] = useState(false);
   const [isLogsOpen, setIsLogsOpen] = useState(false);
+  const [isBrowseOpen, setIsBrowseOpen] = useState(false);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
-  const [isTraining, setIsTraining] = useState(false);
+  const [favorites, setFavorites] = useState<Set<string>>(new Set());
+
   const [lastSync, setLastSync] = useState<Date | null>(null);
+
+  // Delete Modal State
+  const [deleteTicker, setDeleteTicker] = useState<string | null>(null);
+
+  // Refreshing State (for individual ticker refresh)
+  const [refreshingTicker, setRefreshingTicker] = useState<string | null>(null);
+
+  // Toast notifications
+  const { showToast } = useToast();
+
+  // AI Prediction Panel
+  const [isAIPanelOpen, setIsAIPanelOpen] = useState(false);
+
+  // Model Playground Page
+  const [isPlaygroundOpen, setIsPlaygroundOpen] = useState(false);
+
+  // Prevent duplicate initial fetch
+  const hasFetchedRef = useRef(false);
 
   // Helper to detect crypto tickers
   const isCryptoTicker = (ticker: string): boolean => {
@@ -39,11 +70,17 @@ export default function Home() {
 
   // Fetch dashboard data from API
   const fetchDashboard = useCallback(async () => {
+    if (isLoading) return; // Prevent concurrent fetches
+
     setIsLoading(true);
     try {
       const res = await fetch(`${API_BASE}/dashboard`);
       if (!res.ok) throw new Error("Failed to fetch dashboard");
       const data: DashboardItem[] = await res.json();
+
+      // Build favorites set from response
+      const favSet = new Set(data.filter(item => item.is_favorite).map(item => item.ticker));
+      setFavorites(favSet);
 
       const mappedAssets: Asset[] = data.map((item) => ({
         ticker: item.ticker,
@@ -53,7 +90,16 @@ export default function Home() {
         accuracy: item.accuracy ?? (item.prediction > item.current_price),
         isCrypto: isCryptoTicker(item.ticker),
         source: item.source,
+        isFavorite: item.is_favorite !== false,
       }));
+
+      // Sort: Favorites first, then alphabetical
+      mappedAssets.sort((a, b) => {
+        if (a.isFavorite === b.isFavorite) {
+          return a.ticker.localeCompare(b.ticker);
+        }
+        return a.isFavorite ? -1 : 1;
+      });
 
       setAssets(mappedAssets);
     } catch (err) {
@@ -61,7 +107,7 @@ export default function Home() {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, []); // No dependencies - doesn't depend on changing state
 
   // Sync data from Alpaca (offline-first: only sync when user clicks)
   const handleSyncData = async () => {
@@ -79,28 +125,16 @@ export default function Home() {
     }
   };
 
-  // Train model
-  const handleTrainModel = async () => {
-    setIsTraining(true);
-    try {
-      const res = await fetch(`${API_BASE}/model/train`, { method: "POST" });
-      if (!res.ok) throw new Error("Training failed");
-      alert("Training started successfully!");
-    } catch (err) {
-      console.error("Failed to start training:", err);
-      alert("Failed to start training.");
-    } finally {
-      setIsTraining(false);
-    }
-  };
-
-  // Initial load
+  // Initial load - only fetch once
   useEffect(() => {
+    if (hasFetchedRef.current) return;
+
     fetch(`${API_BASE}/status`)
       .then((res) => res.json())
       .then((data) => {
         setConfigured(data.configured);
-        if (data.configured) {
+        if (data.configured && !hasFetchedRef.current) {
+          hasFetchedRef.current = true;
           fetchDashboard();
         }
       })
@@ -108,50 +142,113 @@ export default function Home() {
   }, [fetchDashboard]);
 
   // Add asset to watchlist and ingest data
-  const handleAddAsset = async (ticker: string) => {
+  const handleAddAsset = async (ticker: string, isFavorite: boolean = true) => {
+    showToast(`Adding ${ticker.toUpperCase()} to watchlist...`, "info");
     try {
-      // 1. Add to watchlist
-      const watchlistRes = await fetch(`${API_BASE}/watchlist`, {
+      // 1. Add to watchlist (using new stocks router)
+      const watchlistRes = await fetch(`${API_BASE}/stocks/`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ticker }),
+        body: JSON.stringify({ ticker, is_favorite: isFavorite }),
       });
 
       if (!watchlistRes.ok) {
         const err = await watchlistRes.json();
-        alert(`Error adding to watchlist: ${err.detail || "Unknown error"}`);
+        showToast(`Failed to add ${ticker}: ${err.detail || "Unknown error"}`, "error");
         return;
       }
 
-      // 2. Ingest data for this ticker
-      const ingestRes = await fetch(`${API_BASE}/ingest/${ticker}`, { method: "POST" });
+      showToast(`${ticker.toUpperCase()} added! Fetching data...`, "success");
 
-      if (!ingestRes.ok) {
-        const err = await ingestRes.json();
-        alert(`Error ingesting data: ${err.detail || "Unauthorized - Check your API Keys"}`);
-        // Optional: Remove from watchlist if ingest fails? 
-        // For now, we'll leave it or the user can remove it manually.
-        // But the requirement says "Do not add the asset to the table if the fetch fails".
-        // Since we already added it to watchlist, we might want to revert that.
-        await fetch(`${API_BASE}/watchlist/${ticker}`, { method: "DELETE" });
-        return;
+      // Update favorites set
+      if (isFavorite) {
+        setFavorites(prev => new Set([...prev, ticker.toUpperCase()]));
       }
 
-      // 3. Refresh dashboard
-      await fetchDashboard();
+      // Refresh dashboard after short delay to allow background ingestion
+      setTimeout(() => fetchDashboard(), 500);
+
     } catch (err) {
       console.error("Failed to add asset:", err);
-      alert("Network error while adding asset.");
+      showToast("Network error while adding asset.", "error");
+    }
+  };
+
+  // Toggle favorite status
+  const handleToggleFavorite = async (ticker: string, isFavorite: boolean) => {
+    try {
+      const res = await fetch(`${API_BASE}/stocks/${ticker}/favorite`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ is_favorite: isFavorite }),
+      });
+
+      if (!res.ok) throw new Error("Failed to update favorite");
+
+      // Update local state
+      setFavorites(prev => {
+        const next = new Set(prev);
+        if (isFavorite) {
+          next.add(ticker);
+        } else {
+          next.delete(ticker);
+        }
+        return next;
+      });
+
+      // Update assets state
+      setAssets(prev => prev.map(asset =>
+        asset.ticker === ticker ? { ...asset, isFavorite } : asset
+      ));
+
+      showToast(
+        isFavorite
+          ? `${ticker} added to favorites (intrinsic value enabled)`
+          : `${ticker} removed from favorites`,
+        "success"
+      );
+    } catch (err) {
+      console.error("Failed to toggle favorite:", err);
+      showToast("Failed to update favorite status", "error");
     }
   };
 
   // Remove asset from watchlist
-  const handleRemoveAsset = async (ticker: string) => {
+  const handleConfirmDelete = async (cascade: boolean) => {
+    if (!deleteTicker) return;
+
     try {
-      await fetch(`${API_BASE}/watchlist/${ticker}`, { method: "DELETE" });
+      const res = await fetch(`${API_BASE}/stocks/${deleteTicker}?cascade=${cascade}`, {
+        method: "DELETE"
+      });
+
+      if (!res.ok) throw new Error("Failed to delete");
+
+      showToast(`${deleteTicker} removed from watchlist`, "success");
+      setDeleteTicker(null);
       await fetchDashboard();
     } catch (err) {
       console.error("Failed to remove asset:", err);
+      showToast("Failed to remove asset", "error");
+    }
+  };
+
+  // Refresh single asset
+  const handleRefresh = async (ticker: string, mode: "daily" | "full" = "full") => {
+    setRefreshingTicker(ticker);
+    showToast(`Refreshing ${ticker} (${mode} sync)...`, "info");
+    try {
+      const res = await fetch(`${API_BASE}/ingest/${ticker}?mode=${mode}`, { method: "POST" });
+      if (!res.ok) throw new Error("Refresh failed");
+
+      showToast(`${ticker} data updated successfully`, "success");
+      // Refresh dashboard to show updated data
+      await fetchDashboard();
+    } catch (err) {
+      console.error(`Failed to refresh ${ticker}:`, err);
+      showToast(`Failed to refresh ${ticker}`, "error");
+    } finally {
+      setRefreshingTicker(null);
     }
   };
 
@@ -173,6 +270,31 @@ export default function Home() {
         <LogViewer onClose={() => setIsLogsOpen(false)} />
       )}
 
+      <DeleteConfirmationModal
+        ticker={deleteTicker || ""}
+        isOpen={!!deleteTicker}
+        onClose={() => setDeleteTicker(null)}
+        onConfirm={handleConfirmDelete}
+      />
+
+      <BrowseStocksModal
+        isOpen={isBrowseOpen}
+        onClose={() => setIsBrowseOpen(false)}
+        onAdd={handleAddAsset}
+      />
+
+      <AIPredictionPanel
+        isOpen={isAIPanelOpen}
+        onClose={() => setIsAIPanelOpen(false)}
+      />
+
+      {/* Model Playground Full-Page View */}
+      {isPlaygroundOpen && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-zinc-950">
+          <ModelPlayground onBack={() => setIsPlaygroundOpen(false)} />
+        </div>
+      )}
+
       <header className="border-b border-zinc-800 bg-zinc-900/50 backdrop-blur-md sticky top-0 z-40">
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -188,31 +310,25 @@ export default function Home() {
               </span>
             )}
             <button
-              onClick={handleSyncData}
-              disabled={isSyncing}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-emerald-900/20"
-            >
-              <RefreshCw size={16} className={isSyncing ? "animate-spin" : ""} />
-              <span>{isSyncing ? "Syncing..." : "SYNC DATA"}</span>
-            </button>
-            <button
-              onClick={handleTrainModel}
-              disabled={isTraining}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-blue-900/20"
-            >
-              {isTraining ? (
-                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-              ) : (
-                <Terminal size={16} />
-              )}
-              <span>{isTraining ? "Training..." : "Train AI"}</span>
-            </button>
-            <button
               onClick={() => setIsLogsOpen(true)}
               className="p-2 rounded-lg bg-zinc-800 border border-zinc-700 hover:bg-zinc-700 hover:border-zinc-600 transition-colors text-zinc-400 hover:text-white"
               title="System Logs"
             >
               <Terminal size={18} />
+            </button>
+            <button
+              onClick={() => setIsAIPanelOpen(true)}
+              className="p-2 rounded-lg bg-purple-500/20 border border-purple-500/30 hover:bg-purple-500/30 hover:border-purple-500/50 transition-colors text-purple-400 hover:text-purple-300"
+              title="AI Model Inspector"
+            >
+              <Brain size={18} />
+            </button>
+            <button
+              onClick={() => setIsPlaygroundOpen(true)}
+              className="p-2 rounded-lg bg-amber-500/20 border border-amber-500/30 hover:bg-amber-500/30 hover:border-amber-500/50 transition-colors text-amber-400 hover:text-amber-300"
+              title="Model Playground"
+            >
+              <FlaskConical size={18} />
             </button>
             <button
               onClick={() => setIsSetupOpen(true)}
@@ -238,7 +354,13 @@ export default function Home() {
         <div className="flex flex-col gap-6">
           <div className="flex items-center justify-between">
             <div>
-              <h2 className="text-2xl font-semibold text-white">Market Overview</h2>
+              <h2 className="text-2xl font-semibold text-white flex items-center gap-3">
+                Market Overview
+                <span className="text-xs px-2 py-1 bg-amber-500/20 text-amber-400 rounded-full border border-amber-500/30 flex items-center gap-1">
+                  <Star size={12} fill="currentColor" />
+                  {assets.filter(a => a.isFavorite !== false).length} Favorites
+                </span>
+              </h2>
               <p className="text-zinc-400 text-sm mt-1">
                 {isLoading
                   ? "Loading data..."
@@ -247,24 +369,47 @@ export default function Home() {
                     : `Tracking ${assets.length} asset${assets.length !== 1 ? "s" : ""}`}
               </p>
             </div>
-            <AddAssetBar onAdd={handleAddAsset} />
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setIsBrowseOpen(true)}
+                className="p-2 rounded-lg bg-zinc-800 border border-zinc-700 hover:bg-zinc-700 hover:border-zinc-600 transition-colors text-zinc-400 hover:text-white"
+                title="Browse Stocks"
+              >
+                <Grid size={18} />
+              </button>
+              <AddAssetBar onAdd={(ticker) => handleAddAsset(ticker, false)} />
+            </div>
           </div>
 
           {assets.length === 0 && !isLoading ? (
             <div className="flex flex-col items-center justify-center py-20 text-zinc-500">
               <p className="text-lg mb-2">No assets in watchlist</p>
-              <p className="text-sm">Add a ticker above to start tracking</p>
+              <p className="text-sm mb-4">Add a ticker above or browse popular stocks</p>
+              <button
+                onClick={() => setIsBrowseOpen(true)}
+                className="px-6 py-3 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-medium transition-colors flex items-center gap-2"
+              >
+                <Grid size={18} />
+                Browse Stocks
+              </button>
             </div>
           ) : (
-            <AssetTable assets={assets} onSelect={setSelectedAsset} />
+            <AssetTable
+              assets={assets}
+              onSelect={setSelectedAsset}
+              onDelete={setDeleteTicker}
+              onRefresh={handleRefresh}
+              onToggleFavorite={handleToggleFavorite}
+              refreshingTicker={refreshingTicker}
+            />
           )}
         </div>
-      </main>
+      </main >
 
       <DetailDrawer
         asset={selectedAsset}
         onClose={() => setSelectedAsset(null)}
       />
-    </div>
+    </div >
   );
 }
