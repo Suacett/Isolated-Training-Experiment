@@ -56,6 +56,7 @@
 - **data_ingest.py**: Yahoo Finance client (primary data source)
 - **lstm_model.py**: PyTorch LSTM model v6 (60-day window, 37 features)
 - **lstm_model_v7.py**: Enhanced model with attention, biLSTM (41 features)
+- **lstm_model_v8_class.py**: Classification model (binary buy signals, non-overlapping windows)
 - **intrinsic.py**: Graham formula intrinsic value calculation
 - **db.py**: SQLAlchemy async models
 - **feature_engineering.py**: Technical feature computation (41 features for v7)
@@ -72,6 +73,10 @@
 docker exec proxmox_stock_backend python -m scripts.fetch_training_data  # Fetch 59 tickers
 docker exec proxmox_stock_backend python -m scripts.train_model_v7       # Train v7 model
 
+# EXPERIMENTAL: v8 - Classification model (Regime Detection)
+# Uses non-overlapping windows (stride=126) and binary classification targets
+docker exec proxmox_stock_backend python -m scripts.train_model_v8_class
+
 # Previous: v6 - Standard LSTM
 docker exec proxmox_stock_backend python -m scripts.train_model_v6
 
@@ -83,7 +88,8 @@ docker compose restart backend
 
 | Script | Model | Description |
 |--------|-------|-------------|
-| `train_model_v7.py` | **v7** | **NEW** - Attention + BiLSTM, 41 features, DirectionalLoss |
+| `train_model_v7.py` | **v7** | **RECOMMENDED** - Attention + BiLSTM, 41 features, DirectionalLoss |
+| `train_model_v8_class.py` | **v8-class** | **EXPERIMENTAL** - Classification (BCELoss), non-overlapping windows |
 | `train_model_v6.py` | v6 | Standard LSTM, 128 hidden, 37 features |
 | `train_model_v5.py` | v5 | 64 hidden, streaming data |
 | `fetch_training_data.py` | - | Fetches 59 tickers (indices, sectors, top stocks) |
