@@ -106,8 +106,8 @@ export default function BrowseStocksModal({ isOpen, onClose, onAdd }: BrowseStoc
     if (!isOpen) return null;
 
     return (
-        <div className="fixed inset-0 flex items-center justify-center bg-black/80 z-50 backdrop-blur-sm">
-            <div className="bg-zinc-900 border border-zinc-700 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden">
+        <div className="fixed inset-0 flex items-center justify-center bg-[#0A0A0F]/90 z-50 backdrop-blur-sm">
+            <div className="bg-[#12121A] border border-white/[0.08] rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden animate-scale-in">
                 {/* Header */}
                 <div className="p-4 border-b border-zinc-800 flex justify-between items-center">
                     <div>
@@ -131,7 +131,7 @@ export default function BrowseStocksModal({ isOpen, onClose, onAdd }: BrowseStoc
                             placeholder="Search stocks..."
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
-                            className="w-full bg-zinc-800 border border-zinc-700 rounded-lg pl-10 pr-4 py-2 text-white placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-purple-500/50"
+                            className="w-full bg-[#1A1A24]/60 border border-white/[0.08] rounded-lg pl-10 pr-4 py-2 text-white placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-amber-500/50 transition-all"
                         />
                     </div>
 
@@ -141,7 +141,7 @@ export default function BrowseStocksModal({ isOpen, onClose, onAdd }: BrowseStoc
                             placeholder="Enter custom ticker (e.g. NVDA)"
                             value={customTicker}
                             onChange={(e) => setCustomTicker(e.target.value.toUpperCase())}
-                            className="flex-1 bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2 text-white placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-purple-500/50 font-mono"
+                            className="flex-1 bg-[#1A1A24]/60 border border-white/[0.08] rounded-lg px-4 py-2 text-white placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-amber-500/50 font-mono transition-all"
                         />
                         <button
                             type="button"
@@ -157,7 +157,7 @@ export default function BrowseStocksModal({ isOpen, onClose, onAdd }: BrowseStoc
                         <button
                             type="submit"
                             disabled={!customTicker.trim() || addingTicker === customTicker}
-                            className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                            className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-[#0A0A0F] rounded-lg font-semibold disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 transition-all hover:shadow-[0_0_20px_rgba(245,158,11,0.4)]"
                         >
                             {addingTicker === customTicker ? (
                                 <Loader2 size={16} className="animate-spin" />

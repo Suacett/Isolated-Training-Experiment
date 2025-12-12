@@ -166,9 +166,9 @@ export default function ModelPlayground({ onBack }: PlaygroundPageProps) {
     };
 
     return (
-        <div className="min-h-screen bg-zinc-950 text-white">
+        <div className="min-h-screen bg-[#0A0A0F] text-white">
             {/* Header */}
-            <header className="bg-zinc-900/80 border-b border-zinc-800 sticky top-0 z-40 backdrop-blur">
+            <header className="bg-[#12121A]/80 border-b border-white/[0.08] sticky top-0 z-40 backdrop-blur-md">
                 <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
                     <div className="flex items-center gap-4">
                         <button
@@ -178,7 +178,7 @@ export default function ModelPlayground({ onBack }: PlaygroundPageProps) {
                             ← Back
                         </button>
                         <div className="flex items-center gap-2">
-                            <Brain className="text-purple-400" size={24} />
+                            <Brain className="text-amber-400" size={24} />
                             <h1 className="text-xl font-bold">Model Playground</h1>
                         </div>
                     </div>
@@ -191,7 +191,7 @@ export default function ModelPlayground({ onBack }: PlaygroundPageProps) {
                                 <select
                                     value={accuracyDays}
                                     onChange={(e) => setAccuracyDays(Number(e.target.value))}
-                                    className="bg-transparent text-sm text-white font-medium focus:outline-none cursor-pointer hover:text-purple-400"
+                                    className="bg-transparent text-sm text-white font-medium focus:outline-none cursor-pointer hover:text-amber-400"
                                 >
                                     <option value={10}>10 Days</option>
                                     <option value={30}>30 Days</option>
@@ -217,7 +217,7 @@ export default function ModelPlayground({ onBack }: PlaygroundPageProps) {
                             onClick={togglePlayground}
                             disabled={isToggling}
                             className={`px-4 py-2 rounded-lg font-medium transition-all flex items-center gap-2 ${isEnabled
-                                ? "bg-emerald-600 hover:bg-emerald-700 text-white"
+                                ? "bg-amber-500 hover:bg-amber-400 text-[#0A0A0F] hover:shadow-[0_0_20px_rgba(245,158,11,0.4)]"
                                 : "bg-zinc-800 hover:bg-zinc-700 text-zinc-300"
                                 }`}
                         >
@@ -337,7 +337,7 @@ export default function ModelPlayground({ onBack }: PlaygroundPageProps) {
                                     key={ticker}
                                     onClick={() => setSelectedTicker(ticker)}
                                     className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${selectedTicker === ticker
-                                        ? "bg-purple-600 text-white"
+                                        ? "bg-amber-500 text-[#0A0A0F]"
                                         : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"
                                         }`}
                                 >
@@ -403,8 +403,8 @@ export default function ModelPlayground({ onBack }: PlaygroundPageProps) {
                                                     <td className="p-3 text-center bg-zinc-800/10 border-r border-zinc-800/50">
                                                         {model.predictions?.["1d"] ? (
                                                             <span className={`px-2 py-1 rounded text-[10px] font-bold border ${model.predictions["1d"].direction === "bullish"
-                                                                    ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
-                                                                    : "bg-rose-500/20 text-rose-400 border-rose-500/30"
+                                                                ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
+                                                                : "bg-rose-500/20 text-rose-400 border-rose-500/30"
                                                                 }`}>
                                                                 {model.predictions["1d"].direction.toUpperCase()}
                                                             </span>

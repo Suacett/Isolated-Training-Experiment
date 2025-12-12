@@ -129,6 +129,26 @@ def compute_technical_features(df: pd.DataFrame) -> pd.DataFrame:
     # Intraday range
     df['intraday_range'] = (df['high'] - df['low']) / df['close']
 
+    # === V7 NEW FEATURES (8 features) ===
+    # All features are LAGGED by 1 day to avoid data leakage!
+    # We can only use data available BEFORE the prediction timestamp.
+    
+    # 52-week high distance (mean reversion signal)
+    rolling_high_52w = df['high'].rolling(window=252, min_periods=60).max()
+    df['high_52w_dist'] = (df['close'] - rolling_high_52w) / rolling_high_52w
+    df['high_52w_dist_lag1'] = df['high_52w_dist'].shift(1)  # Use yesterday's value
+    
+    # Market momentum using own returns (proxy for market when SPY not available)
+    # This is a 20-day momentum, lagged by 1
+    df['market_momentum_lag1'] = df['momentum_20d'].shift(1)
+    
+    # VIX Proxy: Realized volatility as fear gauge (lagged)
+    df['vix_proxy'] = df['volatility_20d'].shift(1) * 100  # Scale similar to VIX
+    
+    # Regime detection: High vol = 1 (bear/volatile), Low vol = 0 (bull/calm)
+    vol_median = df['volatility_20d'].rolling(252, min_periods=60).median()
+    df['regime_volatility'] = (df['volatility_20d'] > vol_median).astype(float).shift(1)
+    
     return df
 
 
@@ -269,8 +289,11 @@ def process_stock_data(
 
 def get_feature_columns() -> list:
     """
-    Returns the list of 39 feature columns expected by the model.
+    Returns the list of feature columns expected by the model.
     Order matters - this must match the training data.
+    
+    v6: 39 features (37 model inputs)
+    v7: 43 features (41 model inputs) - adds market context features
     """
     return [
         # Price features (keep close for reference, but drop OHLV after processing)
@@ -301,20 +324,70 @@ def get_feature_columns() -> list:
         # Volume indicators (2)
         'OBV', 'abnormal_vol',
 
-        # Price patterns (5)
+        # Price patterns (6)
         'ZScore', 'overnight_gap', 'momentum_5d', 'momentum_20d',
         'skew_5d', 'intraday_range',
 
         # Alternative data (6)
         'insider_shares', 'insider_amount', 'insider_buy_flag',
-        'sentiment', 'num_articles', 'sentiment_change'
+        'sentiment', 'num_articles', 'sentiment_change',
+        
+        # V7 NEW: Market context features (4) - ALL LAGGED to avoid data leakage
+        'high_52w_dist_lag1',      # Distance from 52-week high (lagged)
+        'market_momentum_lag1',    # 20-day momentum (lagged)
+        'vix_proxy',               # Realized volatility as VIX proxy (lagged)
+        'regime_volatility',       # High/low volatility regime (lagged)
     ]
 
 
 def get_model_input_features() -> list:
     """
-    Returns the 39 features used as model inputs (excludes date, close, targets).
+    Returns the 37 features used by v6 and earlier models.
+    Excludes date, close, YesterdayClose, and V7 market context features.
     """
+    # V7-specific features to exclude for older models
+    V7_ONLY_FEATURES = {'high_52w_dist_lag1', 'market_momentum_lag1', 'vix_proxy', 'regime_volatility'}
+    
     all_features = get_feature_columns()
-    # Remove close and YesterdayClose (used for reference only)
-    return [f for f in all_features if f not in ['close', 'YesterdayClose']]
+    # Remove close, YesterdayClose, and V7-specific features
+    return [f for f in all_features if f not in ['close', 'YesterdayClose'] and f not in V7_ONLY_FEATURES]
+
+
+def get_model_input_features_v7() -> list:
+    """
+    Returns the 41 features used by v7 model.
+    Explicitly lists all features for v7 training.
+    """
+    return [
+        # Log returns (5)
+        'YesterdayOpenLogR', 'YesterdayHighLogR', 'YesterdayLowLogR',
+        'YesterdayVolumeLogR', 'YesterdayCloseLogR',
+        
+        # Moving averages (5)
+        'MA10', 'MA20', 'MA30', 'EMA10', 'EMA30',
+        
+        # Time features (3)
+        'DayOfWeek', 'DayOfMonth', 'MonthNumber',
+        
+        # Technical indicators (5)
+        'RSI', 'MACD', 'MACD_Signal', 'BollingerUpper', 'BollingerLower',
+        
+        # Volatility (6)
+        'Volatility_10', 'Volatility_20', 'Volatility_30',
+        'volatility_5d', 'volatility_20d',
+        
+        # Volume indicators (2)
+        'OBV', 'abnormal_vol',
+        
+        # Price patterns (6)
+        'ZScore', 'overnight_gap', 'momentum_5d', 'momentum_20d',
+        'skew_5d', 'intraday_range',
+        
+        # Alternative data (6)
+        'insider_shares', 'insider_amount', 'insider_buy_flag',
+        'sentiment', 'num_articles', 'sentiment_change',
+        
+        # V7 Market context (4) - ALL LAGGED
+        'high_52w_dist_lag1', 'market_momentum_lag1',
+        'vix_proxy', 'regime_volatility',
+    ]

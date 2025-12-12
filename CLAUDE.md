@@ -63,6 +63,7 @@ Alpaca Markets API                                Alpha Vantage (Sentiment/EPS -
 ### Backend Services (`backend/services/`)
 - **data_ingest.py**: `YahooFinanceClient` (primary) and `AlpacaDataClient` (fallback) fetch OHLCV data, auto-detects crypto vs stocks
 - **lstm_model.py**: PyTorch model (Conv1D → BatchNorm → MC Dropout → LSTM → Dense). 60-day input, 37 features, 4-step forecast
+- **lstm_model_v7.py**: V7 Attention model (BiLSTM → Multi-Head Attention → Dense). 60-day input, 41 features, 4-step forecast
 - **intrinsic.py**: Graham formula intrinsic value calculation
 - **db.py**: SQLAlchemy async models (`StockPrice`, `Watchlist`, `Prediction`, `InsiderTrade`, `SentimentData`)
 - **feature_engineering.py**: Computes 37 technical features from OHLCV + insider + sentiment data
@@ -112,7 +113,8 @@ HOLD: otherwise
 - **config_loader.py**: Load/save API keys and settings from `secrets.json`
 
 ### Training Scripts (`backend/scripts/`)
-- **train_model_v6.py**: RECOMMENDED - Train with all stocks, 128 hidden units, clean data
+- **train_model_v7.py**: RECOMMENDED - Train with BiLSTM + Attention, 41 features, DirectionalLoss
+- **train_model_v6.py**: Train with all stocks, 128 hidden units, clean data
 - **train_model_v5.py**: Train with all stocks, 64 hidden units
 - **train_model_v4.py**: Train with 200 stocks (may OOM on low RAM)
 - **train_model_v3.py**: Train with 100 stocks
@@ -212,11 +214,37 @@ Multiple training scripts are available with different trade-offs:
 
 | Script | Stocks | Memory | Speed | Use Case |
 |--------|--------|--------|-------|----------|
-| `train_model_v6.py` | **ALL** | **Streaming** | Med | **RECOMMENDED - Clean data & bigger model** |
-| `train_model_v5.py` | ALL | Streaming | Med | Previous version (smaller model) |
+| `train_model_v7.py` | **ALL** | **Streaming** | Med | **RECOMMENDED - BiLSTM + Attention** |
+| `train_model_v6.py` | ALL | Streaming | Med | Clean data, bigger model |
+| `train_model_v5.py` | ALL | Streaming | Med | Previous version (smaller) |
 | `train_model_v4.py` | 200 | ~8GB | Med | RAM-based, may OOM |
 
-### Maximum Data Training (v6) - RECOMMENDED
+### V7 Attention Model Training - RECOMMENDED
+
+```bash
+# Fetch training data (59 tickers: indices, sectors, top stocks)
+docker exec proxmox_stock_backend python -m scripts.fetch_training_data
+
+# Train V7 model (BiLSTM + Attention, ~2 hours)
+docker exec proxmox_stock_backend python -m scripts.train_model_v7
+
+# After training, activate:
+docker exec proxmox_stock_backend cp /app/models/lstm_model_v7.pth /app/models/lstm_model_v2.pth
+docker exec proxmox_stock_backend cp /app/models/scaler_v7.pkl /app/models/scaler_v2.pkl
+docker compose restart backend
+```
+
+**V7 Improvements:**
+- **BiLSTM**: Bidirectional LSTM for forward/backward context
+- **Multi-Head Attention**: 4 heads to learn which timesteps matter most
+- **DirectionalLoss**: Penalizes wrong-sign predictions, not just magnitude
+- **41 Features**: Adds market context (52w high distance, market momentum, VIX proxy, regime volatility)
+- **Weighted Sampling**: High-volatility days get 10x more attention
+- **Dual Checkpointing**: Saves best accuracy model AND best loss model separately
+
+**V7 Accuracy:** 52.6% overall, -23.7% bearish bias (more defensive)
+
+### V6 Clean Data Training (Previous)
 
 ```bash
 # Train with ALL stocks, ALL history (recommended for best accuracy)
@@ -282,6 +310,21 @@ docker compose restart backend
 - `1m`: 21 days ahead
 - `6m`: 126 days ahead
 
+### V7 Architecture (41 Features)
+
+**Additional Features (V7 only):**
+- `high_52w_dist_lag1`: Distance from 52-week high (lagged)
+- `market_momentum_lag1`: 20-day momentum (lagged)
+- `vix_proxy`: Realized volatility as VIX proxy
+- `regime_volatility`: High/low volatility regime classifier
+
+**Architecture:**
+- BiLSTM: 2 layers, 128 hidden units, bidirectional
+- Multi-Head Attention: 4 heads on temporal dimension
+- Residual connections for gradient flow
+- Gradient checkpointing for memory efficiency
+- CPU offload support for large batches
+
 ### Multi-API Key Support (Alpha Vantage)
 
 For EPS/sentiment data, supports multiple keys with automatic rotation:
@@ -343,15 +386,16 @@ model_loader.disable()
 
 The DetailDrawer (`frontend/app/components/DetailDrawer.tsx`) provides detailed AI prediction visualization.
 
-### Current Features (2025-12-06)
+### Current Features (2025-12-11)
 - **Forecast Cards**: Yesterday's result, Tomorrow, 1 Week, 1 Month, 6 Month predictions
 - **Interactive Chart**: Multi-line with Price, AI Prediction, S&P 500, Intrinsic Value
 - **View Modes**: Chart vs Table toggle
 - **Percentage Mode**: Compare stock vs S&P 500 performance
 - **Line Toggles**: Show/hide individual chart lines
-- **Time Ranges**: 1M, 3M, 6M, 1Y, ALL (currently missing 1D, 1W)
+- **Time Ranges**: 1W, 1M, 3M, 6M, 1Y, 5Y, ALL
 - **Accuracy Stream**: Clickable bars showing daily prediction accuracy
 - **Detail Modal**: Click any bar/row to see prediction details
+- **Downsampling**: Automatic 500-point limit for performance with large datasets
 
 ### Backend Integration
 - `GET /dashboard/{ticker}` - Historical data with predictions, intrinsic value, SPY comparison
@@ -359,21 +403,61 @@ The DetailDrawer (`frontend/app/components/DetailDrawer.tsx`) provides detailed 
 
 ---
 
-## Outstanding Issues (TODO)
+## Design System (Minimalist Dark)
 
-### DetailDrawer Issues
-1. **Performance**: Graph laggy with ALL data (5000+ points) - reduce limit or downsample
-2. **Missing Time Ranges**: Add 1D (1 day) and 1W (1 week) options
-3. **Info Bubbles Blocked**: Forecast card tooltips cut off - fix z-index/overflow
-4. **More Prediction Details Needed**:
-   - Show expected % movement (not just price)
-   - Explain confidence score meaning
-   - Explain intrinsic value calculation
-   - Show error rate distribution
-5. **Model Loading Timing**: "No models loaded" errors appear during startup before models finish loading
+The frontend uses a "Minimalist Dark" design system with:
 
-### Sync Button Issue
-- Settings "Sync All" button may be broken - needs investigation
+### Color Palette
+- **Background**: `#0A0A0F` (deep slate)
+- **Background Alt**: `#12121A` (headers, modals)
+- **Muted**: `#1A1A24` (cards, inputs)
+- **Accent**: `#F59E0B` (warm amber - primary accent)
+- **Border**: `rgba(255,255,255,0.08)` (subtle borders)
 
-### API Errors
-- Some tickers getting 400 errors due to model loading timing (should resolve after startup completes)
+### Typography
+- **Display**: Space Grotesk (headings)
+- **Body**: Inter (UI text)
+- **Mono**: JetBrains Mono (prices, data)
+
+### Effects
+- Glass card effect with backdrop blur
+- Amber glow on hover for interactive elements
+- Scale-in and slide-in animations for modals
+
+---
+
+## API Routers
+
+Backend endpoints are organized into routers (`backend/routers/`):
+- **stocks.py**: Watchlist management, favorites
+- **dashboard.py**: Historical data, predictions
+- **ingestion.py**: Data fetching from external APIs
+- **predictions.py**: Prediction history and stats
+- **backtest.py**: Historical prediction generation
+- **forecasts.py**: Multi-horizon AI forecasts
+- **playground.py**: Model Playground for comparing multiple models
+
+---
+
+## Recent Changes (2025-12-12)
+
+### V7 Model Released
+- ✅ BiLSTM + Multi-Head Attention architecture
+- ✅ 41 features (adds 4 market context features)
+- ✅ DirectionalLoss for better trade direction
+- ✅ Dual checkpointing (best accuracy vs best loss)
+- ✅ 52.6% accuracy, -23.7% bearish bias
+- ✅ Model Playground supports all 9 model versions on CUDA
+
+### Resolved Issues
+- ✅ Graph performance optimized (500-point downsampling)
+- ✅ Sync All button working
+- ✅ Forecast card tooltips visible (z-index fixed)
+- ✅ New routers extracted from main.py (forecasts, playground)
+- ✅ V7 feature compatibility with legacy models (37 vs 41 features)
+
+### Design System Update
+- Migrated from previous theme to "Minimalist Dark"
+- Warm amber (`#F59E0B`) as primary accent color
+- Glass card effects with backdrop blur
+- Premium typography (Space Grotesk, Inter, JetBrains Mono)

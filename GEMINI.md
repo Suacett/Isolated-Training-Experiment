@@ -11,90 +11,121 @@
 
 ## 2. Data Architecture
 - **Database:** PostgreSQL with TimescaleDB extension (running in Docker).
-- **Data Source:** Alpaca Markets (Free Tier).
-  - **Secrets:** API Keys must be loaded from `Config` (via `config_loader.py`). NEVER commit keys.
-- **Stock List:** Refer to `stock_list.txt` or `stockList.csv` in the legacy files for the initial watchlist.
+- **Data Sources:**
+  - Yahoo Finance (Primary) - Free, no API key required
+  - Alpha Vantage (EPS/Intrinsic Value for favorites only)
+- **Secrets:** API Keys stored in `backend/secrets.json` via frontend modal. NEVER commit keys.
 
-## 3. Refactoring Strategy
-- **Intrinsic Value:** Port logic from `suacett/intrinsic-value-monitor/1-produce_data.ipynb` into a stateless Python class `IntrinsicCalculator`.
-- **LSTM Predictor:** Port logic from `suacett/lstm_ai_stock_predictor/forecasting_backtest_Predictor.py`.
-  - Decouple data scraping from model training.
-  - Ensure the LSTM model accepts the dynamic `device` argument.
+## 3. UI/UX Guidelines (Minimalist Dark Design System)
+- **Theme:** Minimalist Dark with Warm Amber Accent
+- **Colors:**
+  - Background: `#0A0A0F` (deep slate)
+  - Background Alt: `#12121A` (headers, modals)
+  - Accent: `#F59E0B` (warm amber)
+  - Success: `#10B981` (green)
+  - Error: `#F43F5E` (red)
+- **Typography:**
+  - Display: Space Grotesk (headings)
+  - Body: Inter (UI text)
+  - Mono: JetBrains Mono (prices, data)
+- **Effects:**
+  - Glass card effect with backdrop blur
+  - Amber glow on hover for interactive elements
+  - Scale-in and slide-in animations for modals
 
-## 4. UI/UX Guidelines (Next.js + Tailwind)
-- **Theme:** Dark Mode (Financial Dashboard aesthetic).
-- **Layout:** Sidebar navigation + Main Content Grid.
-- **Components:**
-  - `TickerTape`: Scrolling summary of watched stocks.
-  - `PredictionCard`: Displays [Current Price] vs [Intrinsic Value] vs [LSTM Prediction] vs [Confidence Score].
-  - `EngineLogs`: A real-time view of the Docker container logs (to show training progress).
-- **Visuals:** Use Green (`#10B981`) for Bullish/Buy, Red (`#F43F5E`) for Bearish/Sell.
-
-## 5. Coding Standards (TDD)
-1. **Plan:** Outline the file structure before writing code.
-2. **Test:** Write a failing `pytest` unit test based on the expected Input/Output.
-3. **Implement:** Write minimum code to pass.
-4. **Modularity:** No files over 200 lines. Break logic into `services/`, `models/`, `utils/`.
-
----
-
-## 6. MASTER PROJECT CHECKLIST
-**Phase 1: Infrastructure**
-- [ ] **Task 1.1:** Initialize `docker-compose.yml` (Postgres/TimescaleDB, Python Backend, Node Frontend).
-- [ ] **Task 1.2:** Configure NVIDIA Container Toolkit in Docker Compose for dynamic GPU pass-through.
-- [ ] **Task 1.3:** Set up `.env` template and `requirements.txt`.
-
-**Phase 2: Data & Backend (Python/FastAPI)**
-- [ ] **Task 2.1:** Create `db_manager.py` with TimescaleDB schema for OHLCV data.
-- [x] **Task 2.2:** Create `data_ingest.py` for Alpaca Markets (Stock & Crypto support).
-- [ ] **Task 2.3:** **Refactor Intrinsic Logic:** Port `1-produce_data.ipynb` to `IntrinsicValueCalculator` class.
-- [ ] **Task 2.4:** **Test Intrinsic Logic:** Verify output against `HistoricalPrices.csv`.
-- [ ] **Task 2.5:** **Refactor LSTM Logic:** Port `forecasting_backtest_Predictor.py` to `LSTMModel` class.
-- [ ] **Task 2.6:** **GPU Verification:** Add startup log to print "Running on [Device Name]".
-
-**Phase 3: Frontend (Next.js)**
-- [ ] **Task 3.1:** Scaffold Next.js app with Tailwind CSS (Dark Mode).
-- [ ] **Task 3.2:** Build `TickerTape` component.
-- [ ] **Task 3.3:** Build `PredictionCard` component with Chart.js/Recharts.
-- [ ] **Task 3.4:** Build `LogViewer` component (streaming logs from backend).
-- [ ] **Task 3.5:** Connect Frontend to Backend API.
+## 4. Coding Standards
+1. **Modularity:** Break logic into `services/`, `routers/`, `utils/`.
+2. **Type Hints:** Python type hints everywhere.
+3. **Async-First:** `async def` for routes and DB interactions.
+4. **No Hardcoded Devices:** Use dynamic `torch.device()` detection.
 
 ---
 
-## 7. Model Training
+## 5. Backend Architecture
+
+### API Routers (`backend/routers/`)
+- **stocks.py**: Watchlist management, favorites
+- **dashboard.py**: Historical data, predictions
+- **ingestion.py**: Data fetching from external APIs
+- **predictions.py**: Prediction history and stats
+- **backtest.py**: Historical prediction generation
+- **forecasts.py**: Multi-horizon AI forecasts
+- **playground.py**: Model Playground for comparing multiple models
+
+### Services (`backend/services/`)
+- **data_ingest.py**: Yahoo Finance client (primary data source)
+- **lstm_model.py**: PyTorch LSTM model v6 (60-day window, 37 features)
+- **lstm_model_v7.py**: Enhanced model with attention, biLSTM (41 features)
+- **intrinsic.py**: Graham formula intrinsic value calculation
+- **db.py**: SQLAlchemy async models
+- **feature_engineering.py**: Technical feature computation (41 features for v7)
+- **model_loader.py**: Multi-model loader for Model Playground
+
+---
+
+## 6. Model Training
 
 ### Training Commands
 
 ```bash
-# MAXIMUM DATA - All stocks, all history (recommended)
-docker exec proxmox_stock_backend python -m scripts.train_model_v5
+# RECOMMENDED: v7 - Attention model with market features
+docker exec proxmox_stock_backend python -m scripts.fetch_training_data  # Fetch 59 tickers
+docker exec proxmox_stock_backend python -m scripts.train_model_v7       # Train v7 model
 
-# After training, activate:
-docker exec proxmox_stock_backend cp /app/models/lstm_model_v5.pth /app/models/lstm_model_v2.pth
-docker exec proxmox_stock_backend cp /app/models/scaler_v5.pkl /app/models/scaler_v2.pkl
+# Previous: v6 - Standard LSTM
+docker exec proxmox_stock_backend python -m scripts.train_model_v6
+
+# Models auto-activate on restart (backend detects latest version)
 docker compose restart backend
 ```
 
 ### Training Scripts
 
-| Script | Data | Memory | Description |
-|--------|------|--------|-------------|
-| `train_model_v5.py` | ALL | Streaming | Uses disk memmap - handles unlimited data |
-| `train_model_v4.py` | 200 | ~8GB | RAM-based, may OOM on large datasets |
-| `train_model_v3.py` | 100 | ~4GB | Legacy, fixed stock count |
+| Script | Model | Description |
+|--------|-------|-------------|
+| `train_model_v7.py` | **v7** | **NEW** - Attention + BiLSTM, 41 features, DirectionalLoss |
+| `train_model_v6.py` | v6 | Standard LSTM, 128 hidden, 37 features |
+| `train_model_v5.py` | v5 | 64 hidden, streaming data |
+| `fetch_training_data.py` | - | Fetches 59 tickers (indices, sectors, top stocks) |
 
-### Accuracy Results (2025-12-05)
+### Accuracy Results (2025-12-12)
 
 | Model | SPY | AAPL | AMD | Bias | Notes |
 |-------|-----|------|-----|------|-------|
-| **v6 (Clean Data)** | **54.0%** | **51.1%** | **50.1%** | **+8% (Bullish)** | **REALISTIC** - No duplicate data |
-| v5 (Dirty Data) | 46% | 68%* | 69%* | -45% (Bearish) | *Inflated by duplicates (predicting flat) |
-| v3 (Legacy) | 54% | 37% | 40% | N/A | Good for indices only |
+| **v7 (Attention)** | 52.6% | TBD | TBD | -23.7% (Bearish) | **NEW** - BiLSTM + Attention |
+| v6 (Clean Data) | 54.0% | 51.1% | 50.1% | +8% (Bullish) | Baseline |
 
-### Multi-API Key Support
+---
 
-Alpha Vantage supports multiple keys for higher throughput:
+## 7. Frontend Components
+
+### Key Components (`frontend/app/components/`)
+- **AssetTable**: Portfolio overview with favorites toggle
+- **DetailDrawer**: Chart visualization (1W, 1M, 3M, 6M, 1Y, 5Y, ALL)
+- **SetupModal**: API key configuration
+- **ModelPlayground**: Compare multiple model versions
+- **AIPredictionPanel**: AI model inspector
+
+### Chart Features
+- Multi-line: Price, AI Prediction, S&P 500, Intrinsic Value
+- 500-point downsampling for performance
+- Percentage mode for relative comparison
+- Accuracy stream with daily prediction results
+
+---
+
+## 8. Quick Commands
+
 ```bash
-# In .env
-ALPHA_VANTAGE_KEYS=key1,key2,key3,key4
+# Start all services
+docker compose up -d
+
+# View logs
+docker compose logs -f backend
+
+# Restart after code changes
+docker compose restart backend
+
+# Run tests
+docker compose exec backend pytest -v
 ```

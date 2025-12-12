@@ -4,7 +4,15 @@ This guide explains how to train and use the full 39-feature LSTM model with leg
 
 ## Overview
 
-The model has been upgraded from the initial 5-feature integration to the full 39-feature system from the legacy implementation:
+The model has been upgraded through multiple versions. The latest is V7 with BiLSTM + Attention:
+
+**V7 Model (41 Features) - RECOMMENDED:**
+- BiLSTM: Bidirectional LSTM for forward/backward context
+- Multi-Head Attention: 4 heads to learn which timesteps matter most
+- DirectionalLoss: Penalizes wrong-sign predictions
+- 41 features including 4 market context features
+
+**Legacy Models (37 Features):**
 
 **39 Features:**
 - **Log Returns (5)**: Yesterday's OHLCV log returns
@@ -37,9 +45,23 @@ docker compose exec backend pip install -r requirements.txt
 
 ### Step 2: Run Training
 
+**V7 Training (RECOMMENDED):**
 ```bash
-# From project root
-python backend/scripts/train_model.py
+# Fetch training data (59 tickers: indices, sectors, top stocks)
+docker exec proxmox_stock_backend python -m scripts.fetch_training_data
+
+# Train V7 model (BiLSTM + Attention, ~2 hours)
+docker exec proxmox_stock_backend python -m scripts.train_model_v7
+
+# Activate V7 as production model
+docker exec proxmox_stock_backend cp /app/models/lstm_model_v7.pth /app/models/lstm_model_v2.pth
+docker exec proxmox_stock_backend cp /app/models/scaler_v7.pkl /app/models/scaler_v2.pkl
+docker compose restart backend
+```
+
+**Legacy V6 Training:**
+```bash
+docker exec proxmox_stock_backend python -m scripts.train_model_v6
 ```
 
 This will:
@@ -299,6 +321,15 @@ const predictions = await fetch(`/api/predictions/${ticker}`).then(r => r.json()
 ### Issue: "Alpha Vantage API limit"
 **Solution:** Free tier allows 5 calls/minute. Sentiment collection sleeps 12s between requests.
 
+## Accuracy Benchmarks
+
+| Model | Training | SPY Accuracy | Bias | Notes |
+|-------|----------|--------------|------|-------|
+| **V7** | 528 stocks, 1.7M samples | **52.6%** | -23.7% (Bearish) | BiLSTM + Attention |
+| V6 | All stocks, clean data | 54.0% | +8% (Bullish) | Baseline |
+| V3 | 100 stocks | ~54% | N/A | Legacy |
+
+**Note:** V7 is more defensive/bearish - better at vetoing bad trades.
 ## Performance Notes
 
 **Training Time:**

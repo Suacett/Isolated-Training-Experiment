@@ -121,12 +121,12 @@ export default function AIPredictionPanel({ isOpen, onClose }: AIPredictionPanel
     if (!isOpen) return null;
 
     return (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <div className="bg-zinc-900 border border-zinc-700 rounded-xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+        <div className="fixed inset-0 bg-[#0A0A0F]/90 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-[#12121A] border border-white/[0.08] rounded-xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col animate-scale-in">
                 {/* Header */}
-                <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800">
+                <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.08]">
                     <div className="flex items-center gap-3">
-                        <Brain className="text-purple-400" size={24} />
+                        <Brain className="text-amber-400" size={24} />
                         <div>
                             <h2 className="text-xl font-bold text-white">AI Model Inspector</h2>
                             <p className="text-xs text-zinc-400">Active Model: <span className="text-emerald-400 font-mono">{modelVersion}</span></p>
@@ -147,7 +147,7 @@ export default function AIPredictionPanel({ isOpen, onClose }: AIPredictionPanel
                         <select
                             value={selectedTicker}
                             onChange={(e) => setSelectedTicker(e.target.value)}
-                            className="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-purple-500"
+                            className="bg-[#1A1A24]/60 border border-white/[0.08] rounded-lg px-3 py-2 text-white focus:outline-none focus:border-amber-500/50 transition-all"
                         >
                             {tickers.map((t) => (
                                 <option key={t} value={t}>{t}</option>

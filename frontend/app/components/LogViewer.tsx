@@ -34,11 +34,11 @@ export default function LogViewer({ onClose }: LogViewerProps) {
     }, []);
 
     return (
-        <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-80 z-50">
-            <div className="bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl max-w-3xl w-full h-[600px] flex flex-col relative">
-                <div className="flex items-center justify-between p-4 border-b border-zinc-800">
+        <div className="fixed inset-0 flex items-center justify-center bg-[#0A0A0F]/90 backdrop-blur-sm z-50">
+            <div className="bg-[#12121A] border border-white/[0.08] rounded-xl shadow-2xl max-w-3xl w-full h-[600px] flex flex-col relative animate-scale-in">
+                <div className="flex items-center justify-between p-4 border-b border-white/[0.08]">
                     <div className="flex items-center gap-2 text-white">
-                        <Terminal size={20} className="text-emerald-500" />
+                        <Terminal size={20} className="text-amber-500" />
                         <h2 className="font-bold">System Logs</h2>
                     </div>
                     <button

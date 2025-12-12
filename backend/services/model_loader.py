@@ -13,6 +13,7 @@ from dataclasses import dataclass
 import gc
 
 from services.lstm_model import LSTMModel
+from services.lstm_model_v7 import LSTMModelV7
 from services.scaler import FeatureScaler
 from services.model_metadata import get_available_models, get_model_path, get_scaler_path, ModelInfo
 
@@ -93,8 +94,8 @@ class MultiModelLoader:
         available = get_available_models()
         logger.info(f"🔄 Loading {len(available)} models...")
         
-        # Sort so we load most important models to GPU first (v6, v5, v3)
-        priority_order = ["v6", "v5", "v3", "v2", "hybrid", "legacy", "v4", "pre_stationarity", "backup", "default"]
+        # Sort so we load most important models to GPU first (v7, v6, v5, v3)
+        priority_order = ["v7", "v6", "v5", "v3", "v2", "hybrid", "legacy", "v4", "pre_stationarity", "backup", "default"]
         available_sorted = sorted(
             available,
             key=lambda m: priority_order.index(m.version) if m.version in priority_order else 99
@@ -132,8 +133,14 @@ class MultiModelLoader:
                 device = "cpu"
         
         try:
-            # Load model
-            model = LSTMModel.load(str(model_path), device=device)
+            # Load model - use LSTMModelV7 for v7, LSTMModel for others
+            if info.version == "v7":
+                # LSTMModelV7.load expects torch.device, not string
+                device_obj = torch.device(device)
+                model = LSTMModelV7.load(str(model_path), device=device_obj)
+                logger.info(f"Loading V7 attention model with 41 features")
+            else:
+                model = LSTMModel.load(str(model_path), device=device)
             
             # Load scaler
             scaler = None

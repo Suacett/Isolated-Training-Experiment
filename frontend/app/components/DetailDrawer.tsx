@@ -644,9 +644,9 @@ export default function DetailDrawer({ asset, onClose }: DetailDrawerProps) {
     if (!asset) return null;
 
     return (
-        <div className="fixed inset-y-0 right-0 w-[900px] bg-zinc-950 border-l border-zinc-800 shadow-2xl z-50 flex flex-col">
+        <div className="fixed inset-y-0 right-0 w-[900px] bg-[#0A0A0F] border-l border-white/[0.08] shadow-2xl z-50 flex flex-col animate-slide-in">
             {/* Header */}
-            <div className="p-4 border-b border-zinc-800 flex justify-between items-center bg-zinc-900/50 backdrop-blur">
+            <div className="p-4 border-b border-white/[0.08] flex justify-between items-center bg-[#12121A]/80 backdrop-blur-md">
                 <div>
                     <h2 className="text-xl font-bold text-white flex items-center gap-3">
                         {asset.ticker}
@@ -744,8 +744,8 @@ export default function DetailDrawer({ asset, onClose }: DetailDrawerProps) {
                             </div>
                         </div>
 
-                        {/* Forecast Cards */}
-                        <div className="flex gap-2 mb-4 pb-2 flex-wrap">
+                        {/* Forecast Cards - overflow-visible for tooltips */}
+                        <div className="flex gap-2 mb-4 pb-2 flex-wrap overflow-visible relative z-[100]">
                             {yesterdayResult && (
                                 <ForecastCard
                                     label="Yesterday"

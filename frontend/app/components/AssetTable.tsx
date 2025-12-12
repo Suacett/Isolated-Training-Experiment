@@ -47,9 +47,9 @@ export default function AssetTable({ assets, onSelect, onDelete, onRefresh, onTo
     };
 
     return (
-        <div className="w-full overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900/50">
+        <div className="w-full overflow-hidden rounded-xl border border-white/[0.08] bg-[#1A1A24]/60 backdrop-blur-md">
             <table className="w-full text-left text-sm text-zinc-400 table-fixed">
-                <thead className="bg-zinc-900 text-xs uppercase text-zinc-500 border-b border-zinc-800">
+                <thead className="bg-[#12121A] text-xs uppercase text-zinc-500 border-b border-white/[0.08]">
                     <tr>
                         <th className="px-4 py-3 font-medium w-[50px]"></th>
                         <th className="px-4 py-3 font-medium w-[120px]">Ticker</th>

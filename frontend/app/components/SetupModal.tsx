@@ -142,8 +142,8 @@ export default function SetupModal({ onClose }: SetupModalProps) {
     };
 
     return (
-        <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-80 z-50">
-            <div className="bg-gray-900 border border-gray-700 p-8 rounded-xl shadow-2xl max-w-lg w-full relative">
+        <div className="fixed inset-0 flex items-center justify-center bg-[#0A0A0F]/90 backdrop-blur-sm z-50">
+            <div className="bg-[#12121A] border border-white/[0.08] p-8 rounded-xl shadow-2xl max-w-lg w-full relative animate-scale-in">
                 {onClose && (
                     <button
                         onClick={onClose}

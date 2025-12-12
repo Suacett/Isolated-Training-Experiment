@@ -254,14 +254,17 @@ export default function Home() {
 
   if (configured === null) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-black text-white">
-        Loading...
+      <div className="flex min-h-screen items-center justify-center bg-[#0A0A0F] text-white">
+        <div className="flex items-center gap-3">
+          <div className="w-5 h-5 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
+          <span className="text-zinc-400">Loading...</span>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="flex min-h-screen flex-col bg-black text-zinc-100 font-sans selection:bg-emerald-500/30">
+    <div className="flex min-h-screen flex-col bg-[#0A0A0F] text-[#FAFAFA] font-sans selection:bg-amber-500/30">
       {(!configured || isSetupOpen) && (
         <SetupModal onClose={configured ? () => setIsSetupOpen(false) : undefined} />
       )}
@@ -295,11 +298,11 @@ export default function Home() {
         </div>
       )}
 
-      <header className="border-b border-zinc-800 bg-zinc-900/50 backdrop-blur-md sticky top-0 z-40">
+      <header className="border-b border-white/[0.08] bg-[#12121A]/80 backdrop-blur-md sticky top-0 z-40">
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div className={`w-3 h-3 rounded-full ${configured ? "bg-emerald-500 animate-pulse" : "bg-red-500"}`} />
-            <h1 className="text-lg font-bold tracking-tight text-white">
+            <div className={`w-3 h-3 rounded-full ${configured ? "bg-amber-500 animate-pulse shadow-[0_0_10px_rgba(245,158,11,0.5)]" : "bg-red-500"}`} />
+            <h1 className="text-lg font-bold tracking-tight text-white font-display">
               Stock AI Dashboard
             </h1>
           </div>
@@ -311,39 +314,39 @@ export default function Home() {
             )}
             <button
               onClick={() => setIsLogsOpen(true)}
-              className="p-2 rounded-lg bg-zinc-800 border border-zinc-700 hover:bg-zinc-700 hover:border-zinc-600 transition-colors text-zinc-400 hover:text-white"
+              className="p-2 rounded-lg bg-[#1A1A24]/60 border border-white/[0.08] hover:border-white/[0.15] transition-all text-zinc-400 hover:text-white"
               title="System Logs"
             >
               <Terminal size={18} />
             </button>
             <button
               onClick={() => setIsAIPanelOpen(true)}
-              className="p-2 rounded-lg bg-purple-500/20 border border-purple-500/30 hover:bg-purple-500/30 hover:border-purple-500/50 transition-colors text-purple-400 hover:text-purple-300"
+              className="p-2 rounded-lg bg-amber-500/10 border border-amber-500/30 hover:bg-amber-500/20 hover:border-amber-500/50 transition-all text-amber-400 hover:text-amber-300 hover:shadow-[0_0_15px_rgba(245,158,11,0.2)]"
               title="AI Model Inspector"
             >
               <Brain size={18} />
             </button>
             <button
               onClick={() => setIsPlaygroundOpen(true)}
-              className="p-2 rounded-lg bg-amber-500/20 border border-amber-500/30 hover:bg-amber-500/30 hover:border-amber-500/50 transition-colors text-amber-400 hover:text-amber-300"
+              className="p-2 rounded-lg bg-amber-500/10 border border-amber-500/30 hover:bg-amber-500/20 hover:border-amber-500/50 transition-all text-amber-400 hover:text-amber-300 hover:shadow-[0_0_15px_rgba(245,158,11,0.2)]"
               title="Model Playground"
             >
               <FlaskConical size={18} />
             </button>
             <button
               onClick={() => setIsSetupOpen(true)}
-              className="p-2 rounded-lg bg-zinc-800 border border-zinc-700 hover:bg-zinc-700 hover:border-zinc-600 transition-colors text-zinc-400 hover:text-white"
+              className="p-2 rounded-lg bg-[#1A1A24]/60 border border-white/[0.08] hover:border-white/[0.15] transition-all text-zinc-400 hover:text-white"
               title="Settings"
             >
               <Settings size={18} />
             </button>
             <span className="flex items-center gap-1.5 ml-2">
-              <span className={`w-2 h-2 rounded-full ${configured ? "bg-emerald-500" : "bg-red-500"}`} />
-              <span className={configured ? "text-emerald-500" : "text-red-500"}>
+              <span className={`w-2 h-2 rounded-full ${configured ? "bg-amber-500 shadow-[0_0_6px_rgba(245,158,11,0.5)]" : "bg-red-500"}`} />
+              <span className={configured ? "text-amber-400" : "text-red-500"}>
                 {configured ? "Active" : "Setup Required"}
               </span>
             </span>
-            <span className="px-2 py-0.5 rounded bg-zinc-800 border border-zinc-700 font-mono text-xs">
+            <span className="px-2 py-0.5 rounded bg-[#1A1A24]/60 border border-white/[0.08] font-mono text-xs">
               v1.0.0
             </span>
           </div>
@@ -387,7 +390,7 @@ export default function Home() {
               <p className="text-sm mb-4">Add a ticker above or browse popular stocks</p>
               <button
                 onClick={() => setIsBrowseOpen(true)}
-                className="px-6 py-3 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-medium transition-colors flex items-center gap-2"
+                className="px-6 py-3 bg-amber-500 hover:bg-amber-400 text-[#0A0A0F] rounded-lg font-semibold transition-all hover:shadow-[0_0_20px_rgba(245,158,11,0.4)] flex items-center gap-2"
               >
                 <Grid size={18} />
                 Browse Stocks
