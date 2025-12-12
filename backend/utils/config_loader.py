@@ -32,15 +32,25 @@ def load_config() -> Optional[Dict[str, str]]:
         return None
 
 
-def save_config(alpha_vantage_key: str = None):
+def save_config(alpha_vantage_key: str = None, alpha_vantage_keys: str = None):
     """
     Saves API keys to backend/secrets.json.
     Only Alpha Vantage needed (Yahoo Finance is free).
+
+    Args:
+        alpha_vantage_key: Single API key (legacy, backwards compatible)
+        alpha_vantage_keys: Comma-separated list of API keys (preferred for multiple keys)
     """
     existing = load_config() or {}
 
     if alpha_vantage_key is not None:
         existing["ALPHA_VANTAGE_KEY"] = alpha_vantage_key
+
+    if alpha_vantage_keys is not None:
+        # Validate and save multiple keys
+        keys_list = [k.strip() for k in alpha_vantage_keys.split(",") if k.strip()]
+        if keys_list:
+            existing["ALPHA_VANTAGE_KEYS"] = ",".join(keys_list)
 
     with open(SECRETS_FILE, "w") as f:
         json.dump(existing, f, indent=4)
@@ -55,9 +65,21 @@ def clear_config():
 
 
 def is_alpha_vantage_configured() -> bool:
-    """Check if Alpha Vantage API key is configured."""
+    """
+    Check if Alpha Vantage API key(s) are configured.
+    Returns True if either single or multiple keys are set.
+    """
     config = load_config() or {}
-    key = config.get("ALPHA_VANTAGE_KEY") or os.getenv("ALPHA_VANTAGE_KEY")
+
+    # Check for multiple keys first (preferred)
+    keys_str = config.get("ALPHA_VANTAGE_KEYS") or os.getenv("ALPHA_VANTAGE_KEYS", "")
+    if keys_str:
+        keys_list = [k.strip() for k in keys_str.split(",") if k.strip()]
+        if keys_list:
+            return True
+
+    # Fall back to single key (legacy)
+    key = config.get("ALPHA_VANTAGE_KEY") or os.getenv("ALPHA_VANTAGE_KEY", "")
     return bool(key and key != "your_alpha_vantage_key_here")
 
 
@@ -66,12 +88,19 @@ class Settings:
     Settings class providing property access to API keys.
     Yahoo Finance requires no API key.
     Alpha Vantage needed only for EPS data (intrinsic value).
+    Supports both single key (ALPHA_VANTAGE_KEY) and multiple keys (ALPHA_VANTAGE_KEYS).
     """
 
     @property
     def ALPHA_VANTAGE_KEY(self) -> Optional[str]:
         config = load_config() or {}
         return config.get("ALPHA_VANTAGE_KEY") or os.getenv("ALPHA_VANTAGE_KEY")
+
+    @property
+    def ALPHA_VANTAGE_KEYS(self) -> Optional[str]:
+        """Get comma-separated list of Alpha Vantage API keys."""
+        config = load_config() or {}
+        return config.get("ALPHA_VANTAGE_KEYS") or os.getenv("ALPHA_VANTAGE_KEYS")
 
 
 settings = Settings()

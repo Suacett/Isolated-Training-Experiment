@@ -25,6 +25,7 @@ License: MIT
 import logging
 import sys
 import re
+import subprocess
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, List
@@ -36,25 +37,32 @@ import pandas as pd
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 
 # Local application imports - Services
 from services.lstm_model import LSTMModel, get_device
+from services.transformer_model import TransformerRankModel
 from services.db import (
-    get_watchlist,
-    add_watchlist_item,
-    remove_watchlist_item,
-    get_latest_close,
-    get_unique_tickers,
+    StockPrice, 
+    init_db, 
+    get_latest_close, 
+    get_watchlist, 
+    add_watchlist_item, 
     get_historical_data,
+    get_all_cached_intrinsic_values,
+    remove_watchlist_item, # Keep existing imports not explicitly removed
+    get_unique_tickers,
     get_favorites,
     get_watchlist_with_favorites,
     save_prediction,
-    get_all_cached_intrinsic_values,
 )
 from services.data_ingest import YahooFinanceClient, AlphaVantageClient
 from services.intrinsic import IntrinsicCalculator
 from services.scaler import FeatureScaler
+from services.scaler import FeatureScaler
 from services.feature_engineering import process_stock_data, get_model_input_features
+from services.feature_engineering_v9 import compute_v9_features, get_v9_feature_names
 from services.model_metadata import get_available_models, get_model_info, MODEL_REGISTRY
 from services.model_loader import model_loader
 
@@ -66,7 +74,7 @@ from utils.config_loader import (
 from state import state
 
 # Local application imports - Routers
-from routers import ingestion, predictions, dashboard, backtest, stocks, forecasts, playground
+from routers import ingestion, predictions, dashboard, backtest, stocks, forecasts, playground, paper, portfolio_comparison
 
 # Configure logging
 LOG_FILE = Path("backend.log")
@@ -111,11 +119,13 @@ app.include_router(dashboard.router)
 app.include_router(backtest.router)
 app.include_router(forecasts.router)
 app.include_router(playground.router)
+app.include_router(paper.router)
+app.include_router(portfolio_comparison.router)
 
 # Model and scaler paths
 # We will dynamically select the best available model
 MODELS_DIR = Path(__file__).parent / "models"
-MODEL_VERSIONS = ["v6", "v5", "v4", "v3", "v2"]
+MODEL_VERSIONS = ["v9", "v7", "v6", "v5", "v4", "v3", "v2"]
 
 # Default to v2 if nothing else found
 MODEL_WEIGHTS_PATH = MODELS_DIR / "lstm_model_v2.pth"
@@ -124,7 +134,10 @@ ACTIVE_MODEL_VERSION = "v2"
 
 # Check for newer versions
 for version in MODEL_VERSIONS:
-    model_path = MODELS_DIR / f"lstm_model_{version}.pth"
+    if version == "v9":
+        model_path = MODELS_DIR / "transformer_v9.pth"
+    else:
+        model_path = MODELS_DIR / f"lstm_model_{version}.pth"
     scaler_path = MODELS_DIR / f"scaler_{version}.pkl"
     if model_path.exists() and scaler_path.exists():
         MODEL_WEIGHTS_PATH = model_path
@@ -136,10 +149,37 @@ for version in MODEL_VERSIONS:
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # Allow all origins for portfolio demo
-    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# =============================================================================
+# AUTOMATED PAPER TRADING SCHEDULER
+# =============================================================================
+
+# Create scheduler instance
+scheduler = AsyncIOScheduler()
+
+async def run_daily_paper_trading():
+    """Run paper trader script at market close."""
+    logger.info("🤖 Starting automated V9 paper trading run...")
+    try:
+        result = subprocess.run(
+            ["python", "-m", "scripts.paper_trader_v9", "--run-day"],
+            capture_output=True,
+            text=True,
+            cwd="/app"
+        )
+        if result.returncode == 0:
+            logger.info(f"✅ Paper trading completed successfully")
+            if result.stdout:
+                logger.debug(f"Output: {result.stdout}")
+        else:
+            logger.error(f"❌ Paper trading failed with code {result.returncode}")
+            if result.stderr:
+                logger.error(f"Error: {result.stderr}")
+    except Exception as e:
+        logger.error(f"❌ Failed to run paper trader: {e}")
 
 # =============================================================================
 # PYDANTIC MODELS (Request/Response Schemas)
@@ -150,6 +190,7 @@ class WatchlistItem(BaseModel):
 
 class APIKeys(BaseModel):
     ALPHA_VANTAGE_KEY: Optional[str] = None
+    ALPHA_VANTAGE_KEYS: Optional[str] = None  # Comma-separated for multiple keys
 
 @app.on_event("startup")
 async def startup_event():
@@ -174,10 +215,14 @@ async def startup_event():
     if MODEL_WEIGHTS_PATH.exists():
         print(f"🚀 ACTIVATING MODEL: {MODEL_WEIGHTS_PATH.name} ({ACTIVE_MODEL_VERSION})")
         try:
-            # Use class method to load - reads input_dim, window_size from checkpoint
-            state.lstm_model = LSTMModel.load(str(MODEL_WEIGHTS_PATH), device=state.device)
-            logger.info(f"✅ Successfully loaded trained model from {MODEL_WEIGHTS_PATH}")
-            logger.info(f"   Model config: input_dim={state.lstm_model.input_dim}, window_size={state.lstm_model.window_size}")
+            if ACTIVE_MODEL_VERSION == "v9":
+                state.lstm_model = TransformerRankModel.load(str(MODEL_WEIGHTS_PATH), device=state.device)
+                logger.info(f"✅ Successfully loaded V9 Transformer from {MODEL_WEIGHTS_PATH}")
+            else:
+                # Use class method to load - reads input_dim, window_size from checkpoint
+                state.lstm_model = LSTMModel.load(str(MODEL_WEIGHTS_PATH), device=state.device)
+                logger.info(f"✅ Successfully loaded trained model from {MODEL_WEIGHTS_PATH}")
+                logger.info(f"   Model config: input_dim={state.lstm_model.input_dim}, window_size={state.lstm_model.window_size}")
         except Exception as e:
             logger.error(f"❌ Failed to load model weights: {e}. Creating new model.")
             state.lstm_model = LSTMModel(input_dim=37, window_size=60, device=state.device)
@@ -187,7 +232,10 @@ async def startup_event():
         logger.info("⚠️ Initialized new LSTM model (no trained weights found)")
 
     if state.lstm_model:
-        logger.info(f"✅ AI Model Active: LSTM (Input: {state.lstm_model.input_dim} features, Hidden: {state.lstm_model.hidden_dim})")
+        if ACTIVE_MODEL_VERSION == "v9":
+             logger.info(f"✅ AI Model Active: Transformer V9 (Rank Prediction)")
+        else:
+             logger.info(f"✅ AI Model Active: LSTM (Input: {state.lstm_model.input_dim} features, Hidden: {state.lstm_model.hidden_dim})")
 
     # Log API Key Status - Only Alpha Vantage needed (Yahoo Finance is free)
     logger.info("✅ Yahoo Finance: Always Available (No API Key Required)")
@@ -231,6 +279,26 @@ async def startup_event():
     except Exception as e:
         logger.warning(f"⚠️ Failed to check/seed watchlist: {e}")
 
+    # Schedule daily paper trading (4:30 PM EST, weekdays only)
+    try:
+        scheduler.add_job(
+            run_daily_paper_trading,
+            CronTrigger(hour=16, minute=30, day_of_week="mon-fri", timezone="America/New_York"),
+            id="daily_paper_trading",
+            name="V9 Paper Trading Daily Run"
+        )
+        scheduler.start()
+        logger.info("📅 Scheduled daily paper trading at 4:30 PM EST (weekdays)")
+    except Exception as e:
+        logger.warning(f"⚠️ Failed to start scheduler: {e}")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Cleanup on shutdown."""
+    if scheduler.running:
+        scheduler.shutdown()
+        logger.info("📅 Scheduler stopped")
+
 @app.get("/status")
 async def get_status():
     """Get system status including data sources and AI model."""
@@ -252,14 +320,24 @@ async def get_ai_status():
     """Get detailed AI model status and configuration."""
     model_info = None
     if state.lstm_model:
-        model_info = {
-            "type": "LSTM",
-            "input_features": state.lstm_model.input_dim,
-            "hidden_dim": state.lstm_model.hidden_dim,
-            "num_layers": getattr(state.lstm_model, 'num_layers', 2),
-            "window_size": getattr(state.lstm_model, 'window_size', 60),
-            "horizons": ["1d", "1w", "1m", "6m"]
-        }
+        if ACTIVE_MODEL_VERSION == "v9":
+            model_info = {
+                "type": "Transformer V9",
+                "input_features": getattr(state.lstm_model, 'feature_dim', 12),
+                "hidden_dim": getattr(state.lstm_model, 'd_model', 128),
+                "num_layers": getattr(state.lstm_model, 'num_layers', 2),
+                "window_size": 60,
+                "horizons": ["5d"]
+            }
+        else:
+            model_info = {
+                "type": "LSTM",
+                "input_features": state.lstm_model.input_dim,
+                "hidden_dim": state.lstm_model.hidden_dim,
+                "num_layers": getattr(state.lstm_model, 'num_layers', 2),
+                "window_size": getattr(state.lstm_model, 'window_size', 60),
+                "horizons": ["1d", "1w", "1m", "6m"]
+            }
     
     return {
         "model_loaded": state.lstm_model is not None,
@@ -281,8 +359,8 @@ async def debug_model_info():
         "model_exists": MODEL_WEIGHTS_PATH.exists(),
         "scaler_file": SCALER_PATH.name,
         "scaler_exists": SCALER_PATH.exists(),
-        "input_features": state.lstm_model.input_dim if state.lstm_model else None,
-        "hidden_dim": state.lstm_model.hidden_dim if state.lstm_model else None,
+        "input_features": getattr(state.lstm_model, 'input_dim', getattr(state.lstm_model, 'feature_dim', None)) if state.lstm_model else None,
+        "hidden_dim": getattr(state.lstm_model, 'hidden_dim', getattr(state.lstm_model, 'd_model', None)) if state.lstm_model else None,
         "trained_date": "2025-12-05",
         "device": str(state.device) if state.device else "cpu"
     }
@@ -337,19 +415,30 @@ async def debug_features(ticker: str):
 
 @app.post("/settings/keys")
 async def save_keys(keys: APIKeys):
-    """Save API keys. Only Alpha Vantage needed (Yahoo Finance is free)."""
+    """Save API keys. Supports single key (legacy) or multiple keys (recommended)."""
     try:
-        save_config(alpha_vantage_key=keys.ALPHA_VANTAGE_KEY)
-        
+        # Save both single and multiple keys
+        save_config(
+            alpha_vantage_key=keys.ALPHA_VANTAGE_KEY,
+            alpha_vantage_keys=keys.ALPHA_VANTAGE_KEYS
+        )
+
         # Update state
-        if keys.ALPHA_VANTAGE_KEY:
+        if keys.ALPHA_VANTAGE_KEY or keys.ALPHA_VANTAGE_KEYS:
             state.alpha_vantage_enabled = True
-            logger.info("✅ Alpha Vantage key saved")
-        
+
+            # Log which keys were saved
+            if keys.ALPHA_VANTAGE_KEYS:
+                key_count = len([k.strip() for k in keys.ALPHA_VANTAGE_KEYS.split(",") if k.strip()])
+                logger.info(f"✅ Alpha Vantage keys saved: {key_count} keys configured ({key_count * 5} calls/min)")
+            else:
+                logger.info("✅ Alpha Vantage key saved (legacy single key)")
+
         return {
             "message": "Settings saved successfully",
-            "alpha_vantage_saved": bool(keys.ALPHA_VANTAGE_KEY),
-            "data_source": "yahoo_finance"
+            "alpha_vantage_saved": bool(keys.ALPHA_VANTAGE_KEY or keys.ALPHA_VANTAGE_KEYS),
+            "data_source": "yahoo_finance",
+            "key_type": "multiple" if keys.ALPHA_VANTAGE_KEYS else "single" if keys.ALPHA_VANTAGE_KEY else None
         }
     except Exception as e:
         logger.error(f"Failed to save keys: {e}")
@@ -454,66 +543,56 @@ async def get_dashboard_summary():
                     } for d in historical_data])
                     
                     # Process features
-                    processed_df = process_stock_data(df, create_targets=False)
-                    feature_cols = get_model_input_features()
+                    # Process features
+                    # Process features
+                    if ACTIVE_MODEL_VERSION == "v9":
+                        processed_df = compute_v9_features(df)
+                        feature_cols = get_v9_feature_names()
+                    else:
+                        processed_df = process_stock_data(df, create_targets=False)
+                        feature_cols = get_model_input_features()
                     
                     if len(processed_df) > 0:
                         # Get latest features
-                        latest_features = processed_df.iloc[-1][feature_cols].values.reshape(1, -1)
-                        
-                        # Scale
-                        if state.scaler:
-                            scaled_features = state.scaler.transform(latest_features)
-                            
-                            # Reshape for LSTM [batch, features, seq_len] -> actually model expects [batch, seq_len, features] or similar?
-                            # Wait, the error said: expected input[1, 5, 60] to have 37 channels, but got 5 channels instead
-                            # The model likely expects [batch, seq_len, features] or [batch, features, seq_len] depending on implementation.
-                            # Let's check LSTMModel.predict.
-                            # Assuming it takes [batch, seq_len, features] based on standard PyTorch LSTM, 
-                            # BUT the error "expected input[1, 5, 60] to have 37 channels" suggests Conv1d or similar?
-                            # Let's look at the error again: "Given groups=1, weight of size [32, 37, 3], expected input[1, 5, 60] to have 37 channels, but got 5 channels instead"
-                            # This implies the input is [1, 5, 60] (Batch, Channels, SeqLen) and it wants 37 channels.
-                            # So we need to provide 37 features.
-                            
-                            # We need a sequence of 60 steps.
-                            # So we need the last 60 rows of processed_df.
-                            
-                            if len(processed_df) >= 60:
-                                seq_data = processed_df.iloc[-60:][feature_cols].values # (60, 37)
-                                scaled_seq = state.scaler.transform(seq_data) # (60, 37)
+                        if len(processed_df) >= 60:
+                             if ACTIVE_MODEL_VERSION == "v9":
+                                seq = processed_df.iloc[-60:][feature_cols].values
+                                if state.scaler:
+                                    seq = state.scaler.transform(seq)
+                                input_tensor = torch.tensor(seq, dtype=torch.float32).unsqueeze(0)
+                                rank_score = state.lstm_model.predict(input_tensor).item()
+                                prediction = rank_score
                                 
-                                # Transpose to [1, 37, 60] if model expects [channels, seq_len]
-                                # The error "expected input[1, 5, 60]" implies it got 5 channels (OHLCV) and 60 steps.
-                                # So we need to pass [1, 37, 60].
-                                
-                                # CORRECTION: The model forward method permutes (Batch, SeqLen, Features) -> (Batch, Features, SeqLen).
-                                # So we should pass (Batch, SeqLen, Features) -> (1, 60, 37).
+                                # V9 Signal Logic
+                                if rank_score >= 0.8: signal = "STRONG BUY"
+                                elif rank_score >= 0.6: signal = "BUY"
+                                elif rank_score <= 0.2: signal = "SELL"
+                                else: signal = "HOLD"
+                             else:
+                                # Legacy LSTM Logic
+                                seq_data = processed_df.iloc[-60:][feature_cols].values 
+                                scaled_seq = state.scaler.transform(seq_data)
                                 input_tensor = torch.tensor(scaled_seq, dtype=torch.float32).unsqueeze(0)
                                 log_return = state.lstm_model.predict(input_tensor, state.device)
-                                # CRITICAL: Model outputs log returns, not prices!
-                                # predicted_price = current_price * exp(log_return)
                                 prediction = current_price * np.exp(log_return)
+                                
+                                is_bullish_prediction = prediction > current_price * 1.02
+                                is_undervalued = intrinsic_value > 0 and current_price < intrinsic_value
+                                is_deep_value = intrinsic_value > 0 and current_price < 0.5 * intrinsic_value
+                                
+                                if is_bullish_prediction and is_undervalued:
+                                    signal = "STRONG BUY"
+                                elif is_bullish_prediction:
+                                    signal = "BUY"
+                                elif is_deep_value:
+                                    signal = "VALUE BUY"
+                                elif prediction < current_price * 0.98:
+                                    signal = "SELL"
+                                else:
+                                    signal = "HOLD"
             except Exception as e:
                 logger.error(f"Prediction error for {ticker}: {e}")
-        
-        signal = "HOLD"
-        # Combine Intrinsic Value and AI Prediction for Signal
-        # Logic: If Prediction > Current + 2% AND Price < Intrinsic -> STRONG BUY
-        #        If Prediction > Current + 2% -> BUY
-        #        If Price < 0.5 * Intrinsic -> VALUE BUY
-        
-        is_bullish_prediction = prediction > current_price * 1.02
-        is_undervalued = intrinsic_value > 0 and current_price < intrinsic_value
-        is_deep_value = intrinsic_value > 0 and current_price < 0.5 * intrinsic_value
-        
-        if is_bullish_prediction and is_undervalued:
-            signal = "STRONG BUY"
-        elif is_bullish_prediction:
-            signal = "BUY"
-        elif is_deep_value:
-            signal = "VALUE BUY"
-        elif prediction < current_price * 0.98:
-            signal = "SELL"
+                signal = "ERROR"
             
         summaries.append({
             "ticker": ticker,
@@ -592,8 +671,12 @@ async def get_dashboard_detail(ticker: str):
     } for d in historical_data])
     
     if not full_df.empty:
-        processed_full_df = process_stock_data(full_df, create_targets=False)
-        feature_cols = get_model_input_features()
+        if ACTIVE_MODEL_VERSION == "v9":
+             processed_full_df = compute_v9_features(full_df)
+             feature_cols = get_v9_feature_names()
+        else:
+             processed_full_df = process_stock_data(full_df, create_targets=False)
+             feature_cols = get_model_input_features()
         
         # We need to align processed_df with original indices.
         # process_stock_data drops NaNs, so indices shift.
@@ -637,17 +720,27 @@ async def get_dashboard_detail(ticker: str):
     if windows:
         # Shape: (Batch, SeqLen, Features)
         batch_tensor = torch.tensor(np.array(windows), dtype=torch.float32)
-        log_returns = state.lstm_model.predict_batch(batch_tensor, state.device)
+        
+        if ACTIVE_MODEL_VERSION == "v9":
+             log_returns = state.lstm_model.predict_batch(batch_tensor) # No device arg for V9
+        else:
+             log_returns = state.lstm_model.predict_batch(batch_tensor, state.device)
+             
         log_returns_list = log_returns.cpu().numpy().tolist()
         
         # Convert log returns to predicted prices: pred_price = current_price * exp(log_return)
         predictions_list = []
         for idx, (valid_idx, log_ret) in enumerate(zip(valid_indices, log_returns_list)):
-            # The prediction is for day i, using window ending at i-1
-            # The "current" price is the close at i-1
-            current_close = float(historical_data[valid_idx - 1].close)
-            predicted_price = current_close * np.exp(log_ret)
-            predictions_list.append(predicted_price)
+            if ACTIVE_MODEL_VERSION == "v9":
+                # For V9, log_ret IS the rank score [0, 1]
+                # We return it directly, frontend can handle or display it
+                predictions_list.append(log_ret[0] if isinstance(log_ret, list) else log_ret)
+            else:
+                # The prediction is for day i, using window ending at i-1
+                # The "current" price is the close at i-1
+                current_close = float(historical_data[valid_idx - 1].close)
+                predicted_price = current_close * np.exp(log_ret)
+                predictions_list.append(predicted_price)
     else:
         predictions_list = []
         

@@ -11,6 +11,9 @@ engine = create_async_engine(DATABASE_URL, echo=False)
 AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 Base = declarative_base()
 
+PAPER_SESSION_ID = "v9_golden_2025"
+
+
 class StockPrice(Base):
     __tablename__ = "stock_prices"
     __table_args__ = {'extend_existing': True}
@@ -27,7 +30,7 @@ class Watchlist(Base):
     __tablename__ = "watchlist"
     __table_args__ = {'extend_existing': True}
     ticker = Column(String, primary_key=True)
-    is_favorite = Column(Boolean, default=True)  # Favorites get Alpha Vantage calls
+    is_favorite = Column(Boolean, default=False)  # Favorites get Alpha Vantage calls
     added_at = Column(DateTime, default=datetime.now)
 
 class Prediction(Base):
@@ -73,6 +76,60 @@ class CachedIntrinsicValue(Base):
     eps = Column(Float)
     growth_rate = Column(Float)
     bond_yield = Column(Float)
+
+class PaperPortfolio(Base):
+    __tablename__ = "paper_portfolio"
+    __table_args__ = {'extend_existing': True}
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(String, unique=True, nullable=False)
+    cash_balance = Column(Float, default=10000.0)
+    equity_value = Column(Float, default=0.0)
+    total_value = Column(Float, default=10000.0)
+    days_since_rebalance = Column(Integer, default=5)
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+class PaperPortfolioHistory(Base):
+    __tablename__ = "paper_portfolio_history"
+    __table_args__ = {'extend_existing': True}
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(String, nullable=False)
+    date = Column(DateTime, nullable=False)
+    total_value = Column(Float, nullable=False)
+    equity_value = Column(Float, nullable=False)
+    cash_balance = Column(Float, nullable=False)
+    created_at = Column(DateTime, default=datetime.now)
+
+class PaperHolding(Base):
+    __tablename__ = "paper_holdings"
+    __table_args__ = {'extend_existing': True}
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(String, nullable=False)
+    ticker = Column(String, nullable=False)
+    entry_price = Column(Float, nullable=False)
+    quantity = Column(Float, nullable=False)
+    current_price = Column(Float, nullable=False)
+    stop_loss_level = Column(Float, nullable=False)
+    highest_price = Column(Float, nullable=False)
+    entry_date = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+class PaperTrade(Base):
+    __tablename__ = "paper_trades"
+    __table_args__ = {'extend_existing': True}
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(String, nullable=False)
+    trade_date = Column(DateTime, nullable=False)
+    action = Column(String, nullable=False)
+    ticker = Column(String, nullable=False)
+    price = Column(Float, nullable=False)
+    quantity = Column(Float, nullable=False)
+    reason = Column(String, nullable=False)
+    profit_loss = Column(Float, nullable=True)
 
 async def get_latest_close(ticker: str):
     async with AsyncSessionLocal() as session:
@@ -213,6 +270,14 @@ async def get_watchlist_with_favorites():
         items = result.scalars().all()
         return [{"ticker": item.ticker, "is_favorite": item.is_favorite} for item in items]
 
+async def get_watchlist_item(ticker: str):
+    """Get a single watchlist item by ticker"""
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Watchlist).where(Watchlist.ticker == ticker)
+        )
+        return result.scalar_one_or_none()
+
 async def save_prediction(
     ticker: str,
     prediction_date: datetime,
@@ -334,3 +399,9 @@ async def delete_stock_data(ticker: str):
         await session.execute(delete(InsiderTrade).where(InsiderTrade.ticker == ticker))
         await session.execute(delete(SentimentData).where(SentimentData.ticker == ticker))
         await session.commit()
+
+async def init_db():
+    """Initialize database tables"""
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+

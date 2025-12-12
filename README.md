@@ -11,6 +11,7 @@ designed for deployment on Proxmox with optional GPU acceleration.
 - **Multi-Asset Support**: Stocks, ETFs, and cryptocurrencies
 - **GPU Acceleration**: NVIDIA GPU support for fast inference and training
 - **Automated Sync**: Daily data fetching and prediction generation
+- **Risk Management**: Adaptive market regime detection (VIX/SPY) and volatility targeting
 
 ## Quick Start
 
@@ -160,6 +161,7 @@ docker exec -it proxmox_stock_backend bash
 | /forecasts/{ticker} | GET | Multi-horizon predictions |
 | /stocks/ | GET/POST/DELETE | Watchlist management |
 | /ingest/{ticker} | POST | Trigger data sync |
+| /market-status | GET | Current market regime (VIX/SPY) |
 
 See [docs/API.md](docs/API.md) for complete API reference.
 

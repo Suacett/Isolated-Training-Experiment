@@ -64,6 +64,7 @@
 - **feature_engineering_v9.py**: V9 Stationary feature computation (12 features)
 - **transformer_model.py**: V9 Transformer Encoder for Relative Strength Ranking
 - **model_loader.py**: Multi-model loader for Model Playground
+- **risk_management.py**: Market regime detection (VIX/SPY) and position sizing
 
 ---
 
@@ -114,6 +115,15 @@ docker compose restart backend
 | **v7 (Attention)** | 52.6% | TBD | TBD | -23.7% (Bearish) | **NEW** - BiLSTM + Attention |
 | v6 (Clean Data) | 54.0% | 51.1% | 50.1% | +8% (Bullish) | Baseline |
 
+### Risk Management Standards
+- **Market Regime Detection**:
+  - **Crisis** (VIX > 30): 100% Cash / Veto all buys
+  - **Bear Market** (SPY < SMA200): Defensive (30% Exposure)
+  - **Bull Market**:
+    - Calm (VIX < 20): 100% Exposure
+    - Moderate (VIX 20-25): 80% Exposure
+    - Elevated (VIX 25-30): 60% Exposure
+
 ---
 
 ## 7. Frontend Components
@@ -124,6 +134,7 @@ docker compose restart backend
 - **SetupModal**: API key configuration
 - **ModelPlayground**: Compare multiple model versions
 - **AIPredictionPanel**: AI model inspector
+- **MarketStatusHeader**: Displays current Regime (Bull/Bear) and VIX level
 
 ### Chart Features
 - Multi-line: Price, AI Prediction, S&P 500, Intrinsic Value

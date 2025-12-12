@@ -16,3 +16,4 @@ sec-edgar-downloader
 yfinance
 lxml
 html5lib
+apscheduler

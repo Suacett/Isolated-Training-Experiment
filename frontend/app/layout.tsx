@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import { Inter, Space_Grotesk, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { ToastProvider } from "./components/Toast";
+import Navbar from "./components/Navbar";
+import DisclaimerBanner from "./components/DisclaimerBanner";
 
 // Minimalist Dark Design System Fonts
 const inter = Inter({
@@ -39,6 +41,9 @@ export default function RootLayout({
         suppressHydrationWarning={true}
       >
         <ToastProvider>
+          {/* Global Navigation */}
+          <Navbar />
+          <DisclaimerBanner />
           {children}
         </ToastProvider>
       </body>

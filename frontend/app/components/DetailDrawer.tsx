@@ -407,8 +407,8 @@ const AIModelInfo = ({ confidence, accuracy }: { confidence: number; accuracy: n
         </div>
         <div className="absolute left-0 top-full mt-1 w-64 bg-zinc-900 border border-zinc-700 p-2 rounded shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-[200] pointer-events-none">
             <div className="text-[10px] text-zinc-300 space-y-1">
-                <div><strong>Model:</strong> LSTM + MC Dropout (50 samples)</div>
-                <div><strong>Input:</strong> 60 days × 37 features</div>
+                <div><strong>Model:</strong> Adaptive AI (LSTM/Transformer)</div>
+                <div><strong>Input:</strong> Multi-factor Market Data</div>
                 <div><strong>Horizons:</strong> 1d, 1w, 1m, 6m</div>
                 <div><strong>Confidence:</strong> {(confidence * 100).toFixed(0)}% - {getConfidenceExplanation(confidence)}</div>
                 {accuracy !== null && <div><strong>Accuracy:</strong> {accuracy}% directional</div>}

@@ -10,6 +10,12 @@ from urllib3.util.retry import Retry
 
 logger = logging.getLogger(__name__)
 
+# Import key pool for multi-key Alpha Vantage support
+try:
+    from services.alpha_vantage_pool import key_pool
+except ImportError:
+    key_pool = None
+
 
 # Common ticker typos and corrections
 TICKER_CORRECTIONS = {
@@ -278,12 +284,24 @@ class IntrinsicCalculator:
             logger.warning(warning)
             ticker = corrected_ticker
 
-        # Use settings object which checks both secrets.json AND .env
-        from utils.config_loader import settings
-        api_key = settings.ALPHA_VANTAGE_KEY
-        if not api_key or api_key == "your_alpha_vantage_key_here":
-            logger.error("ALPHA_VANTAGE_KEY not set or still using placeholder value")
+        # Skip crypto tickers (no EPS data available)
+        if ticker.endswith('-USD') or ticker in ['BTC-USD', 'ETH-USD', 'DOGE-USD']:
+            logger.warning(f"Skipping EPS fetch for crypto ticker: {ticker}")
             return None
+
+        # Get API key from key pool (supports multiple keys with rotation)
+        if key_pool and key_pool.get_key_count() > 0:
+            api_key = key_pool.get_key()
+            if not api_key:
+                logger.error(f"No available Alpha Vantage keys in pool after rate limiting")
+                return None
+        else:
+            # Fallback to settings object for backwards compatibility
+            from utils.config_loader import settings
+            api_key = settings.ALPHA_VANTAGE_KEY
+            if not api_key or api_key == "your_alpha_vantage_key_here":
+                logger.error("ALPHA_VANTAGE_KEY not set or still using placeholder value")
+                return None
 
         url = "https://www.alphavantage.co/query"
         params = {
@@ -385,12 +403,19 @@ class IntrinsicCalculator:
             # Note: This is a simplified example. You may need an API key for FRED.
             # Alternative: Use Alpha Vantage TREASURY_YIELD endpoint
 
-            # Use settings object which checks both secrets.json AND .env
-            from utils.config_loader import settings
-            api_key = settings.ALPHA_VANTAGE_KEY
-            if not api_key:
-                logger.warning("Cannot fetch bond yield without API key, using default")
-                return self.DEFAULT_BOND_YIELD
+            # Get API key from key pool (supports multiple keys with rotation)
+            if key_pool and key_pool.get_key_count() > 0:
+                api_key = key_pool.get_key()
+                if not api_key:
+                    logger.warning("Cannot fetch bond yield - no available Alpha Vantage keys, using default")
+                    return self.DEFAULT_BOND_YIELD
+            else:
+                # Fallback to settings object for backwards compatibility
+                from utils.config_loader import settings
+                api_key = settings.ALPHA_VANTAGE_KEY
+                if not api_key:
+                    logger.warning("Cannot fetch bond yield without API key, using default")
+                    return self.DEFAULT_BOND_YIELD
 
             url = "https://www.alphavantage.co/query"
             params = {
