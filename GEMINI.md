@@ -50,6 +50,7 @@
 - **predictions.py**: Prediction history and stats
 - **backtest.py**: Historical prediction generation
 - **forecasts.py**: Multi-horizon AI forecasts
+- **backtest_v9_portfolio.py**: V9 Portfolio simulation (Top-K Ranking)
 - **playground.py**: Model Playground for comparing multiple models
 
 ### Services (`backend/services/`)
@@ -60,6 +61,8 @@
 - **intrinsic.py**: Graham formula intrinsic value calculation
 - **db.py**: SQLAlchemy async models
 - **feature_engineering.py**: Technical feature computation (41 features for v7)
+- **feature_engineering_v9.py**: V9 Stationary feature computation (12 features)
+- **transformer_model.py**: V9 Transformer Encoder for Relative Strength Ranking
 - **model_loader.py**: Multi-model loader for Model Playground
 
 ---
@@ -69,6 +72,11 @@
 ### Training Commands
 
 ```bash
+# STATE-OF-THE-ART: V9 - Transformer Ranking Model
+# Predicts "Relative Strength Rank" (0.0-1.0) among 500 stocks
+docker exec proxmox_stock_backend python -m scripts.fetch_training_data --sp500  # Fetch Full S&P 500
+docker exec proxmox_stock_backend python -m scripts.train_model_v9            # Train Transformer
+
 # RECOMMENDED: v7 - Attention model with market features
 docker exec proxmox_stock_backend python -m scripts.fetch_training_data  # Fetch 59 tickers
 docker exec proxmox_stock_backend python -m scripts.train_model_v7       # Train v7 model
@@ -88,11 +96,16 @@ docker compose restart backend
 
 | Script | Model | Description |
 |--------|-------|-------------|
-| `train_model_v7.py` | **v7** | **RECOMMENDED** - Attention + BiLSTM, 41 features, DirectionalLoss |
-| `train_model_v8_class.py` | **v8-class** | **EXPERIMENTAL** - Classification (BCELoss), non-overlapping windows |
+| `train_model_v9.py` | **V9** | **STATE-OF-THE-ART** - Transformer Encoder, 12 Stationary Features, Relative Strength Ranking |
+| `train_model_v7.py` | v7 | Attention + BiLSTM, 41 features, DirectionalLoss |
+| `train_model_v8_class.py` | v8-class | **LEGACY** - Classification (BCELoss), non-overlapping windows |
 | `train_model_v6.py` | v6 | Standard LSTM, 128 hidden, 37 features |
-| `train_model_v5.py` | v5 | 64 hidden, streaming data |
+| `backtest_v9_portfolio.py` | - | **NEW** - Backtests Top-10 Ranking Strategy |
 | `fetch_training_data.py` | - | Fetches 59 tickers (indices, sectors, top stocks) |
+| `fetch_sp500_full.py` | - | **NEW** - Fetches full S&P 500 (500+ tickers) dynamically |
+| `audit_v7.py` | - | Detects "lazy prediction" (memorization) in V6/V7 |
+| `sanity_check_v8.py` | - | Pre-training validation for V8 |
+| `calibrate_v8.py` | - | Find optimal buy threshold for V8 |
 
 ### Accuracy Results (2025-12-12)
 

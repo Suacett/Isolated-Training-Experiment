@@ -1,32 +1,26 @@
 """
-LSTM Model v8 - Classification Architecture (Regime Detection)
+LSTM Model v8 - Classification Architecture (V4 Legacy Compliant)
 
-This model is designed for BINARY CLASSIFICATION of "buy signals" rather than
-regression-based price prediction. It inherits the attention architecture from V7
-but changes the output layer and loss paradigm.
+This module provides the V4-compliant simple LSTM classifier for regime detection.
+The model is designed for BINARY CLASSIFICATION of "buy signals" rather than
+regression-based price prediction.
+
+V4 Compliance:
+    - Simple architecture: Conv1D(32) -> LSTM(64) -> Dense(32) -> Dense(4)
+    - Window size: 91 (90 + 1 for current day)
+    - Dropout: 0.3 (not 0.5)
+    - ~50k parameters (not 500k+)
 
 Key Differences from V7:
-- Output: 4 class probabilities (one per horizon: 1d, 1w, 1m, 6m)
-- Loss: BCEWithLogitsLoss (during training, raw logits; during inference, sigmoid)
-- Dropout: Increased to 0.5 to prevent overfitting on sparse data
-- Target: Binary (1 = return > threshold, 0 = otherwise)
-
-Architecture:
-    1. Conv1D (64 filters, kernel=3, relu)
-    2. BatchNorm1D
-    3. MC Dropout (0.5)
-    4. Bidirectional LSTM (2 layers, 128 hidden)
-    5. Temporal Attention (weighted timestep importance)
-    6. MC Dropout (0.5)
-    7. Dense (64, relu) with residual
-    8. Dense (4, linear) -> logits for BCEWithLogitsLoss
+    - Output: 4 class probabilities (one per horizon: 1d, 1w, 1m, 6m)
+    - Loss: BCEWithLogitsLoss (during training, raw logits; during inference, sigmoid)
+    - Target: Binary (1 = return > threshold, 0 = otherwise)
 """
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.checkpoint import checkpoint
-from typing import Optional, Tuple
+from typing import Optional
 import numpy as np
 import logging
 
@@ -43,7 +37,7 @@ class MCDropout(nn.Module):
     Monte Carlo Dropout: Applies dropout during training.
     For inference, applies dropout ONLY if force_dropout is True (for uncertainty estimation).
     """
-    def __init__(self, p: float = 0.5):
+    def __init__(self, p: float = 0.3):
         super().__init__()
         self.p = p
         self.force_dropout = False
@@ -53,75 +47,36 @@ class MCDropout(nn.Module):
         return F.dropout(x, p=self.p, training=active)
 
 
-class TemporalAttention(nn.Module):
-    """
-    Temporal Attention: Learns which timesteps are most important for prediction.
-    
-    With sparse non-overlapping windows, attention is CRITICAL for finding
-    patterns across the 60-day window without relying on recency bias.
-    """
-    def __init__(self, hidden_dim: int, num_heads: int = 4):
-        super().__init__()
-        self.hidden_dim = hidden_dim
-        self.num_heads = num_heads
-        self.head_dim = hidden_dim // num_heads
-        
-        assert hidden_dim % num_heads == 0, "hidden_dim must be divisible by num_heads"
-        
-        self.query = nn.Linear(hidden_dim, hidden_dim)
-        self.key = nn.Linear(hidden_dim, hidden_dim)
-        self.value = nn.Linear(hidden_dim, hidden_dim)
-        self.out_proj = nn.Linear(hidden_dim, hidden_dim)
-        
-        self.scale = self.head_dim ** 0.5
-        self.dropout = nn.Dropout(0.1)
-        
-    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        batch_size, seq_len, _ = x.shape
-        
-        Q = self.query(x)
-        K = self.key(x)
-        V = self.value(x)
-        
-        Q = Q.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
-        K = K.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
-        V = V.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
-        
-        attention_scores = torch.matmul(Q, K.transpose(-2, -1)) / self.scale
-        attention_weights = F.softmax(attention_scores, dim=-1)
-        attention_weights = self.dropout(attention_weights)
-        
-        attended = torch.matmul(attention_weights, V)
-        attended = attended.transpose(1, 2).contiguous().view(batch_size, seq_len, self.hidden_dim)
-        attended = self.out_proj(attended)
-        
-        return attended, attention_weights
-
-
 class LSTMModelV8Class(nn.Module):
     """
-    Classification LSTM Model v8 - Regime Detection
+    V4-Compliant Simple LSTM Classifier (Regime Detection)
     
     This model outputs BUY PROBABILITIES for each time horizon:
     - Class 0: No exceptional move expected
     - Class 1: Exceptional positive move expected (return > threshold)
     
-    The threshold is computed as μ + 2σ based on training data only.
+    Architecture (matches legacy run_forecast_v4.ipynb):
+        Conv1D(32, k=3) -> BatchNorm -> MCDropout(0.3)
+        LSTM(64, 1-layer, unidirectional)
+        MCDropout(0.3)
+        Dense(32, ReLU) -> Dense(4, Logits)
+    
+    The threshold is computed as μ + 2σ based on training data only (sniper standard).
     """
     
     # Classification thresholds
     PROBABILITY_THRESHOLD = 0.70  # Only act if P(buy) > 70%
-    MC_SAMPLES = 50
+    MC_SAMPLES = 25  # V4 uses 25
     
     def __init__(
         self,
-        input_dim: int = 41,  # Same as V7
-        hidden_dim: int = 128,
-        num_layers: int = 2,
-        output_dim: int = 4,  # 4 horizons: 1d, 1w, 1m, 6m
-        dropout: float = 0.5,  # INCREASED from 0.3 to prevent overfitting
-        window_size: int = 60,
-        num_attention_heads: int = 4,
+        input_dim: int = 41,
+        hidden_dim: int = 64,      # V4: 64 (not 128)
+        num_layers: int = 1,       # V4: 1 layer (not 2)
+        output_dim: int = 4,
+        dropout: float = 0.3,      # V4: 0.3 (not 0.5)
+        window_size: int = 91,     # V4: 90 + 1 = 91
+        num_attention_heads: int = 0,  # V4: No attention
         use_cpu_offload: bool = False,
         device: Optional[torch.device] = None
     ):
@@ -144,112 +99,88 @@ class LSTMModelV8Class(nn.Module):
         if self.device.type == 'cuda':
             gpu_name = torch.cuda.get_device_name(0)
             gpu_mem = torch.cuda.get_device_properties(0).total_memory / 1e9
-            logger.info(f"🚀 LSTMModelV8Class initializing on {gpu_name} ({gpu_mem:.1f} GB VRAM)")
+            logger.info(f"🚀 LSTMModelV8Class (V4) on {gpu_name} ({gpu_mem:.1f} GB)")
         else:
-            logger.warning("⚠️ LSTMModelV8Class running on CPU - training will be slow")
+            logger.warning("⚠️ LSTMModelV8Class running on CPU")
         
-        print(f"Initializing LSTMModelV8Class (Classification) on device: {self.device}")
+        # === V4 ARCHITECTURE ===
         
-        # === LAYER 1: Conv1D Block ===
-        self.conv1d = nn.Conv1d(in_channels=input_dim, out_channels=64, kernel_size=3, padding=1)
-        self.bn1 = nn.BatchNorm1d(64)
-        
-        # === LAYER 2: MC Dropout (0.5 for sparse data) ===
+        # Layer 1: Conv1D Block (32 filters, not 64)
+        self.conv1d = nn.Conv1d(in_channels=input_dim, out_channels=32, kernel_size=3, padding=1)
+        self.bn1 = nn.BatchNorm1d(32)
         self.mc_dropout1 = MCDropout(dropout)
         
-        # === LAYER 3: Bidirectional LSTM ===
+        # Layer 2: Simple LSTM (64 units, 1 layer, unidirectional)
         self.lstm = nn.LSTM(
-            input_size=64,
+            input_size=32,
             hidden_size=hidden_dim,
-            num_layers=num_layers,
+            num_layers=1,
             batch_first=True,
-            bidirectional=True,
-            dropout=dropout if num_layers > 1 else 0
+            bidirectional=False,
+            dropout=0
         )
-        
-        lstm_output_dim = hidden_dim * 2  # Bidirectional
-        
-        # === LAYER 4: Temporal Attention ===
-        self.attention = TemporalAttention(lstm_output_dim, num_heads=num_attention_heads)
-        self.attention_ln = nn.LayerNorm(lstm_output_dim)
-        
-        # === LAYER 5: MC Dropout ===
         self.mc_dropout2 = MCDropout(dropout)
         
-        # === LAYER 6: Dense with Residual ===
-        self.fc1 = nn.Linear(lstm_output_dim, 64)
-        self.fc1_ln = nn.LayerNorm(64)
-        self.residual_proj = nn.Linear(lstm_output_dim, 64) if lstm_output_dim != 64 else nn.Identity()
-        
-        # === LAYER 7: Classification Output (Logits) ===
-        # NO ACTIVATION HERE - BCEWithLogitsLoss handles sigmoid internally
-        self.fc2 = nn.Linear(64, output_dim)
+        # Layer 3: Dense layers (32 units, not 64)
+        self.fc1 = nn.Linear(hidden_dim, 32)
+        self.fc2 = nn.Linear(32, output_dim)
         
         self.relu = nn.ReLU()
         self.to(self.device)
-        self._use_checkpointing = False
+        
+        # Log parameter count
+        total_params = sum(p.numel() for p in self.parameters())
+        logger.info(f"V4 Model Parameters: {total_params:,} (target: ~50k)")
         
     def enable_checkpointing(self):
-        self._use_checkpointing = True
-        logger.info("✅ Gradient checkpointing enabled")
+        """No-op for V4 simple model (not needed)."""
+        pass
         
     def disable_checkpointing(self):
-        self._use_checkpointing = False
-        
-    def _lstm_forward(self, x: torch.Tensor) -> torch.Tensor:
-        out, _ = self.lstm(x)
-        return out
+        """No-op for V4 simple model."""
+        pass
         
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Forward pass - returns RAW LOGITS (not probabilities).
         Apply sigmoid only during inference.
+        
+        Args:
+            x: Input tensor of shape (batch, seq_len, features)
+            
+        Returns:
+            Logits tensor of shape (batch, 4)
         """
         if self.use_cpu_offload and x.device.type == 'cpu':
             x = x.to(self.device)
         elif x.device != self.device:
             x = x.to(self.device)
         
-        batch_size = x.shape[0]
-        
-        # Conv1D Block
+        # Conv1D expects (batch, channels, seq_len)
         x = x.permute(0, 2, 1)
         x = self.conv1d(x)
         x = self.relu(x)
         x = self.bn1(x)
         x = self.mc_dropout1(x)
+        
+        # Back to (batch, seq_len, channels) for LSTM
         x = x.permute(0, 2, 1)
         
-        # Bidirectional LSTM
-        if self._use_checkpointing and self.training:
-            lstm_out = checkpoint(self._lstm_forward, x, use_reentrant=False)
-        else:
-            lstm_out, _ = self.lstm(x)
+        # Simple LSTM - take final hidden state
+        _, (h_n, _) = self.lstm(x)
+        x = h_n[-1]  # Last layer's hidden state
         
-        # Temporal Attention
-        attended, _ = self.attention(lstm_out)
-        attended = self.attention_ln(attended + lstm_out)
-        pooled = attended.mean(dim=1)
+        x = self.mc_dropout2(x)
         
-        # Dropout
-        pooled = self.mc_dropout2(pooled)
+        # Dense layers
+        x = self.fc1(x)
+        x = self.relu(x)
+        x = self.fc2(x)  # Raw logits
         
-        # Dense with Residual
-        residual = self.residual_proj(pooled)
-        out = self.fc1(pooled)
-        out = self.relu(out)
-        out = self.fc1_ln(out)
-        out = out + residual
-        
-        # Output (LOGITS, not probabilities)
-        out = self.fc2(out)
-        
-        return out
+        return x
     
     def predict_probabilities(self, x: torch.Tensor, device: torch.device = None) -> torch.Tensor:
-        """
-        Inference method - returns PROBABILITIES via sigmoid.
-        """
+        """Inference method - returns PROBABILITIES via sigmoid."""
         if device is None:
             device = self.device
         x = x.to(device)
@@ -316,7 +247,7 @@ class LSTMModelV8Class(nn.Module):
             "probabilities": mean_probs.cpu().numpy(),
             "std": std_probs.cpu().numpy(),
             "buy_signals": (mean_probs >= self.PROBABILITY_THRESHOLD).cpu().numpy(),
-            "confidence": 1.0 - std_probs.cpu().numpy(),  # Lower std = higher confidence
+            "confidence": 1.0 - std_probs.cpu().numpy(),
         }
     
     def save(self, path: str) -> None:
@@ -330,7 +261,7 @@ class LSTMModelV8Class(nn.Module):
             'window_size': self.window_size,
             'dropout_p': self.dropout_p,
             'num_attention_heads': self.num_attention_heads,
-            'version': 'v8-class'
+            'version': 'v8-class-v4compliant'
         }, path)
         print(f"Model saved to {path}")
         
@@ -344,12 +275,12 @@ class LSTMModelV8Class(nn.Module):
         
         model = cls(
             input_dim=checkpoint['input_dim'],
-            hidden_dim=checkpoint['hidden_dim'],
-            num_layers=checkpoint.get('num_layers', 2),
-            output_dim=checkpoint['output_dim'],
+            hidden_dim=checkpoint.get('hidden_dim', 64),
+            num_layers=checkpoint.get('num_layers', 1),
+            output_dim=checkpoint.get('output_dim', 4),  # Default 4 horizons for old checkpoints
             window_size=checkpoint['window_size'],
-            dropout=checkpoint['dropout_p'],
-            num_attention_heads=checkpoint.get('num_attention_heads', 4),
+            dropout=checkpoint.get('dropout_p', 0.3),
+            num_attention_heads=checkpoint.get('num_attention_heads', 0),
             use_cpu_offload=use_cpu_offload,
             device=device
         )

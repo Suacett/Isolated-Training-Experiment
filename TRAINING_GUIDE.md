@@ -6,7 +6,14 @@ This guide explains how to train and use the full 39-feature LSTM model with leg
 
 The model has been upgraded through multiple versions. The latest is V7 with BiLSTM + Attention:
 
-**V7 Model (41 Features) - RECOMMENDED:**
+**V9 Model (12 Features) - STATE OF THE ART:**
+- **Architecture**: Transformer Encoder (2 layers, 4 heads, d_model=64)
+- **Goal**: Cross-sectional Ranking (Who will outperform?)
+- **Features**: Strictly stationary (Log returns, RSI, MACD, Volume Ratio, Rel Strength)
+- **Target**: Percentile Rank (0.0 - 1.0) of 5-day return
+- **Universe**: Full S&P 500 (~500 stocks)
+
+**V7 Model (41 Features) - STABLE:**
 - BiLSTM: Bidirectional LSTM for forward/backward context
 - Multi-Head Attention: 4 heads to learn which timesteps matter most
 - DirectionalLoss: Penalizes wrong-sign predictions
@@ -45,7 +52,19 @@ docker compose exec backend pip install -r requirements.txt
 
 ### Step 2: Run Training
 
-**V7 Training (RECOMMENDED):**
+**V9 Training (STATE OF THE ART):**
+```bash
+# 1. Fetch Full S&P 500 Data (Required for Ranking)
+docker exec proxmox_stock_backend python -m scripts.fetch_training_data --sp500
+
+# 2. Train Transformer Model (Uses Sliding Window + Lazy Loading)
+docker exec proxmox_stock_backend python -m scripts.train_model_v9
+
+# 3. Backtest the Ranking Strategy
+docker exec proxmox_stock_backend python -m scripts.backtest_v9_portfolio
+```
+
+**V7 Training (Stable):**
 ```bash
 # Fetch training data (59 tickers: indices, sectors, top stocks)
 docker exec proxmox_stock_backend python -m scripts.fetch_training_data
@@ -325,8 +344,11 @@ const predictions = await fetch(`/api/predictions/${ticker}`).then(r => r.json()
 
 | Model | Training | SPY Accuracy | Bias | Notes |
 |-------|----------|--------------|------|-------|
-| **V7** | 528 stocks, 1.7M samples | **52.6%** | -23.7% (Bearish) | BiLSTM + Attention |
-| V6 | All stocks, clean data | 54.0% | +8% (Bullish) | Baseline |
+| Model | Training | Accuracy/IC | Notes |
+|-------|----------|-------------|-------|
+| **V9** | S&P 500, Transformer | **IC ~0.09** | **Rank Prediction** | Best for portfolio selection |
+| **V7** | 59 tickers, BiLSTM | **52.6% Acc** | -23.7% Bias | Directional prediction |
+| V6 | All stocks, clean data | 54.0% Acc | +8% Bias | Baseline |
 | V3 | 100 stocks | ~54% | N/A | Legacy |
 
 **Note:** V7 is more defensive/bearish - better at vetoing bad trades.

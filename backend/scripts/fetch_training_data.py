@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Training Data Fetcher for V7 Model
+Training Data Fetcher for V7/V8 Models
 
 Fetches comprehensive market data:
+- FULL S&P 500 (500+ stocks) - scraped from Wikipedia
 - Major indices (SPY, QQQ, DIA, IWM)
 - Sector ETFs (XLK, XLF, etc.)
 - Macro indicators (VIX proxy, bond yields)
-- Top 30 liquid stocks
 
 Data is fetched from 2007 onwards to capture:
 - 2008 Financial Crisis (crash patterns)
@@ -15,6 +15,7 @@ Data is fetched from 2007 onwards to capture:
 
 Usage:
     docker exec proxmox_stock_backend python -m scripts.fetch_training_data
+    docker exec proxmox_stock_backend python -m scripts.fetch_training_data --sp500     # Full S&P 500
     docker exec proxmox_stock_backend python -m scripts.fetch_training_data --validate
 """
 
@@ -25,6 +26,7 @@ import logging
 import argparse
 from pathlib import Path
 from datetime import datetime, timedelta
+import pandas as pd  # For Wikipedia scraping
 
 backend_path = Path(__file__).parent.parent
 sys.path.insert(0, str(backend_path))
@@ -66,6 +68,7 @@ TRAINING_UNIVERSE = [
     "XBI",   # Biotech (risk-on indicator)
     
     # --- MACRO INDICATORS ---
+    "^VIX",  # VIX Volatility Index - Fear gauge (REQUIRED for V9)
     "GLD",   # Gold - Defensive/Inflation hedge
     "TLT",   # 20+ Year Treasury Bonds
     "UUP",   # US Dollar Index
@@ -99,6 +102,56 @@ async def fetch_ticker_data(ticker: str, mode: str = "full") -> dict:
     except Exception as e:
         logger.warning(f"Failed to fetch {ticker}: {e}")
         return {"ticker": ticker, "error": str(e), "status": "failed"}
+
+
+def fetch_sp500_tickers() -> list:
+    """
+    Dynamically fetch the current S&P 500 constituents from Wikipedia.
+    This ensures we always have the latest list.
+    """
+    logger.info("📊 Fetching current S&P 500 constituents from Wikipedia...")
+    
+    try:
+        # Read S&P 500 list from Wikipedia
+        url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
+        tables = pd.read_html(url)
+        sp500_table = tables[0]  # First table is the S&P 500 list
+        
+        # Get ticker symbols
+        tickers = sp500_table['Symbol'].tolist()
+        
+        # Clean up tickers: replace dots with dashes for Yahoo Finance
+        # e.g., BRK.B -> BRK-B
+        tickers = [t.replace('.', '-') for t in tickers]
+        
+        logger.info(f"✅ Found {len(tickers)} S&P 500 stocks")
+        return tickers
+    except Exception as e:
+        logger.warning(f"Failed to fetch S&P 500 from Wikipedia: {e}")
+        logger.warning("Falling back to curated list only")
+        return []
+
+
+def get_full_training_universe(include_sp500: bool = False) -> list:
+    """
+    Build the full training universe.
+    If include_sp500 is True, merge S&P 500 with curated list.
+    """
+    all_tickers = list(TRAINING_UNIVERSE)  # Start with curated list
+    
+    if include_sp500:
+        sp500_tickers = fetch_sp500_tickers()
+        all_tickers.extend(sp500_tickers)
+    
+    # Remove duplicates while preserving order
+    seen = set()
+    unique_tickers = []
+    for t in all_tickers:
+        if t not in seen:
+            seen.add(t)
+            unique_tickers.append(t)
+    
+    return unique_tickers
 
 
 async def fetch_all_data(tickers: list, mode: str = "full", concurrency: int = 5):
@@ -242,11 +295,12 @@ def data_quality_cleanup():
 
 
 async def main():
-    parser = argparse.ArgumentParser(description="Fetch training data for v7 model")
+    parser = argparse.ArgumentParser(description="Fetch training data for v7/v8 model")
     parser.add_argument("--validate", action="store_true", help="Validate data quality")
     parser.add_argument("--cleanup", action="store_true", help="Run data cleanup")
     parser.add_argument("--daily", action="store_true", help="Fetch only recent data (last 5 days)")
-    parser.add_argument("--concurrency", type=int, default=5, help="Number of concurrent fetches")
+    parser.add_argument("--sp500", action="store_true", help="Include full S&P 500 (500+ tickers)")
+    parser.add_argument("--concurrency", type=int, default=10, help="Number of concurrent fetches")
     args = parser.parse_args()
     
     if args.validate:
@@ -260,13 +314,18 @@ async def main():
     mode = "daily" if args.daily else "full"
     
     logger.info("="*60)
-    logger.info("🚀 V7 TRAINING DATA FETCHER")
-    logger.info(f"Fetching {len(TRAINING_UNIVERSE)} tickers")
+    
+    # Build ticker list
+    tickers_to_fetch = get_full_training_universe(include_sp500=args.sp500)
+    
+    logger.info("🚀 V7/V8 TRAINING DATA FETCHER")
+    logger.info(f"S&P 500 mode: {'ENABLED' if args.sp500 else 'DISABLED'}")
+    logger.info(f"Total tickers: {len(tickers_to_fetch)}")
     logger.info(f"Mode: {mode}")
     logger.info("="*60)
     
     # Fetch all data
-    results = await fetch_all_data(TRAINING_UNIVERSE, mode=mode, concurrency=args.concurrency)
+    results = await fetch_all_data(tickers_to_fetch, mode=mode, concurrency=args.concurrency)
     
     total_records = sum(r["records"] for r in results["success"])
     logger.info(f"📊 Total records fetched: {total_records:,}")
