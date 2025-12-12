@@ -1,17 +1,18 @@
 # Proxmox AI Stock Predictor
 
-A closed-loop LSTM-based stock prediction system with multi-horizon forecasting,
+A closed-loop AI-powered stock prediction and paper trading system with multi-model support,
 designed for deployment on Proxmox with optional GPU acceleration.
 
 ## Features
 
-- **LSTM Neural Network**: 37-feature model predicting 1-day, 1-week, 1-month, and 6-month horizons
+- **V9 Transformer AI**: State-of-the-art relative strength ranking model (12 stationary features)
+- **Multi-Model Playground**: Compare predictions across V6, V7, V8, and V9 models
+- **Paper Trading Simulator**: 5-year backtesting with Top-10 ranking + correlation filters
 - **Real-Time Dashboard**: Next.js frontend with interactive charts and prediction visualization
-- **Intrinsic Value Analysis**: Graham Number and DCF calculations using Alpha Vantage EPS data
+- **Intrinsic Value Analysis**: Graham Number calculations using Alpha Vantage EPS data
 - **Multi-Asset Support**: Stocks, ETFs, and cryptocurrencies
 - **GPU Acceleration**: NVIDIA GPU support for fast inference and training
-- **Automated Sync**: Daily data fetching and prediction generation
-- **Risk Management**: Adaptive market regime detection (VIX/SPY) and volatility targeting
+- **Risk Management**: Market regime detection (VIX/SPY) and automatic stop-loss
 
 ## Quick Start
 
@@ -79,8 +80,11 @@ Add to crontab (runs at 6 AM):
 ### Quick Training
 
 ```bash
-# Train with maximum data (recommended)
-docker exec proxmox_stock_backend python -m scripts.train_model_v6
+# V9 Transformer (STATE-OF-THE-ART - Relative Strength Ranking)
+docker exec proxmox_stock_backend python -m scripts.train_model_v9
+
+# V7 Attention LSTM (Recommended for price prediction)
+docker exec proxmox_stock_backend python -m scripts.train_model_v7
 
 # Restart backend to load new model
 docker compose restart backend
@@ -88,11 +92,11 @@ docker compose restart backend
 
 ### Training Options
 
-| Script | Memory | Description |
-|--------|--------|-------------|
-| train_model_v6 | Streaming | Production - handles unlimited data |
-| train_model_v5 | Streaming | Similar to v6, disk-based memmap |
-| train_model_v4 | ~8GB RAM | In-memory, may OOM on large datasets |
+| Script | Model | Description |
+|--------|-------|-------------|
+| train_model_v9 | Transformer | Relative strength ranking (12 features) |
+| train_model_v7 | Attention LSTM | Price prediction (41 features) |
+| train_model_v6 | Standard LSTM | Legacy (37 features) |
 
 See [TRAINING_GUIDE.md](TRAINING_GUIDE.md) for detailed training instructions.
 
@@ -167,13 +171,13 @@ See [docs/API.md](docs/API.md) for complete API reference.
 
 ## Model Performance
 
-| Metric | Value |
-|--------|-------|
-| Direction Accuracy (SPY) | ~54% |
-| Direction Accuracy (Individual) | 50-55% |
-| Prediction Horizons | 1d, 1w, 1m, 6m |
-| Features | 37 technical indicators |
-| Window Size | 60 trading days |
+| Metric | V9 (Transformer) | V7 (LSTM) |
+|--------|------------------|------------|
+| Type | Ranking | Price Prediction |
+| Features | 12 stationary | 41 technical |
+| Window Size | 60 days | 60 days |
+| Output | Rank Score (0-1) | Log Returns |
+| Paper Trading | +93% (5Y) | N/A |
 
 ## License
 

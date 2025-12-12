@@ -60,7 +60,6 @@ from services.db import (
 from services.data_ingest import YahooFinanceClient, AlphaVantageClient
 from services.intrinsic import IntrinsicCalculator
 from services.scaler import FeatureScaler
-from services.scaler import FeatureScaler
 from services.feature_engineering import process_stock_data, get_model_input_features
 from services.feature_engineering_v9 import compute_v9_features, get_v9_feature_names
 from services.model_metadata import get_available_models, get_model_info, MODEL_REGISTRY
@@ -542,9 +541,7 @@ async def get_dashboard_summary():
                         "volume": d.volume
                     } for d in historical_data])
                     
-                    # Process features
-                    # Process features
-                    # Process features
+                    # Process features and prepare for model input
                     if ACTIVE_MODEL_VERSION == "v9":
                         processed_df = compute_v9_features(df)
                         feature_cols = get_v9_feature_names()
@@ -651,9 +648,6 @@ async def get_dashboard_detail(ticker: str):
             })
         return {"history": history_response}
 
-    windows = []
-    valid_indices = []
-    
     windows = []
     valid_indices = []
     
@@ -817,227 +811,12 @@ async def get_model_status():
     }
 
 
-# ============================================================
-# MODEL PLAYGROUND ENDPOINTS
-# ============================================================
-
-@app.get("/models")
-async def list_models():
-    """
-    List all available AI models with metadata and reasoning.
-    """
-    available = get_available_models()
-    
-    return {
-        "models": [
-            {
-                "version": m.version,
-                "display_name": m.display_name,
-                "description": m.description,
-                "reasoning": m.reasoning.strip(),
-                "training_notes": m.training_notes,
-                "is_available": m.is_available
-            }
-            for m in available
-        ],
-        "total": len(available)
-    }
-
-
-@app.get("/settings/playground")
-async def get_playground_setting():
-    """
-    Get current Model Playground toggle status.
-    """
-    enabled = get_playground_enabled()
-    return {
-        "enabled": enabled,
-        "loader_status": model_loader.get_status() if enabled else None
-    }
-
-
-@app.post("/settings/playground")
-async def set_playground_setting(enabled: bool):
-    """
-    Enable or disable Model Playground mode.
-    This setting persists across restarts.
-    
-    WARNING: Enabling loads multiple models which may use 4-8GB VRAM/RAM.
-    """
-    set_playground_enabled(enabled)
-    
-    if enabled:
-        model_loader.enable()
-        # Load all models with VRAM -> RAM fallback
-        model_loader.load_all_models()
-        status = model_loader.get_status()
-        logger.info(f"🎮 Model Playground ENABLED - Loaded {status['loaded_count']} models")
-    else:
-        model_loader.disable()
-        logger.info("🎮 Model Playground DISABLED - All models unloaded")
-    
-    return {
-        "enabled": enabled,
-        "message": "Model Playground enabled" if enabled else "Model Playground disabled",
-        "loader_status": model_loader.get_status()
-    }
-
-
-@app.get("/playground/compare/{ticker}")
-async def playground_compare(ticker: str, accuracy_days: int = 10):
-    """
-    Get predictions from ALL loaded models for a specific ticker.
-    Does NOT call Alpha Vantage API (uses existing DB data).
-    """
-    if not get_playground_enabled():
-        raise HTTPException(status_code=400, detail="Model Playground is disabled. Enable it in Settings first.")
-
-    # Auto-load models if playground is enabled but models aren't loaded yet
-    if not model_loader.loaded_models:
-        logger.info("Auto-loading models for playground...")
-        model_loader.enable()
-        model_loader.load_all_models()
-
-        if not model_loader.loaded_models:
-            raise HTTPException(status_code=500, detail="Failed to load models. Check server logs.")
-        
-    # Get historical data (Need enough for window + accuracy backtest)
-    # 500 days should be safe for 60 window + 90 days backtest + indicators
-    historical_data = await get_historical_data(ticker, limit=500) 
-    current_price = await get_latest_close(ticker)
-    
-    if not historical_data or len(historical_data) < 60:
-        raise HTTPException(status_code=404, detail=f"Insufficient data for {ticker}")
-    
-    # Convert to DataFrame and process features
-    df = pd.DataFrame([{
-        "date": d.timestamp,
-        "open": d.open,
-        "high": d.high,
-        "low": d.low,
-        "close": d.close,
-        "volume": d.volume
-    } for d in historical_data])
-    
-    processed_df = process_stock_data(df, create_targets=False)
-    feature_cols = get_model_input_features()
-    
-    if len(processed_df) == 0:
-        raise HTTPException(status_code=400, detail="Feature processing failed")
-    
-    # Get predictions from each model
-    results = {
-        "ticker": ticker,
-        "current_price": current_price,
-        "timestamp": datetime.now().isoformat(),
-        "models": {}
-    }
-    
-    for version, loaded in model_loader.loaded_models.items():
-        try:
-            # Use the model's scaler if available, else fall back to main scaler
-            scaler = loaded.scaler or state.scaler
-            
-            # --- PREDICTION 1: TOMORROW (Using Today's Data T) ---
-            latest_features = processed_df.iloc[-1][feature_cols].values.reshape(1, -1)
-            if scaler:
-                scaled_features = scaler.transform(latest_features)
-            else:
-                scaled_features = latest_features
-                
-            # Create window if needed
-            window_size = getattr(loaded.model, 'window_size', 60)
-            if window_size > 1 and len(processed_df) >= window_size:
-                window_features = processed_df.iloc[-window_size:][feature_cols].values
-                if scaler:
-                    window_features = scaler.transform(window_features)
-                features_tensor = torch.tensor(window_features, dtype=torch.float32).unsqueeze(0)
-            else:
-                features_tensor = torch.tensor(scaled_features, dtype=torch.float32).unsqueeze(0)
-                
-            prediction_tomorrow = model_loader.get_prediction(version, features_tensor, current_price)
-
-            # --- PREDICTION 2: TODAY (Using Yesterday's Data T-1) ---
-            # This simulates "Yesterday's Prediction" for comparison with today's price
-            yesterday_features = processed_df.iloc[-2][feature_cols].values.reshape(1, -1)
-            if scaler:
-                scaled_yesterday = scaler.transform(yesterday_features)
-            else:
-                scaled_yesterday = yesterday_features
-
-            if window_size > 1 and len(processed_df) >= window_size + 1:
-                # Window ending at T-1
-                window_yesterday = processed_df.iloc[-(window_size+1):-1][feature_cols].values
-                if scaler:
-                    window_yesterday = scaler.transform(window_yesterday)
-                features_tensor_yesterday = torch.tensor(window_yesterday, dtype=torch.float32).unsqueeze(0)
-            else:
-                features_tensor_yesterday = torch.tensor(scaled_yesterday, dtype=torch.float32).unsqueeze(0)
-                
-            # For "Yesterday's Prediction", the "current_price" reference should be Yesterday's Close
-            # to calculate the predicted price correctly from log returns.
-            yesterday_close = float(processed_df.iloc[-2]["close"])
-            prediction_today = model_loader.get_prediction(version, features_tensor_yesterday, yesterday_close)
-            
-            # Calculate Accuracy (Last N days)
-            accuracy = model_loader.calculate_recent_accuracy(version, processed_df, feature_cols, days=accuracy_days)
-            
-            results["models"][version] = {
-                "display_name": loaded.info.display_name,
-                "device": loaded.device,
-                "predictions": prediction_tomorrow,
-                "prediction_today": prediction_today, # The prediction FOR today (made yesterday)
-                "accuracy": accuracy,
-                "error": None
-            }
-
-            if not prediction_tomorrow:
-                 results["models"][version]["error"] = "Prediction failed"
-                
-        except Exception as e:
-            logger.error(f"Playground prediction error for {version}: {e}")
-            results["models"][version] = {
-                "display_name": get_model_info(version).display_name if get_model_info(version) else version,
-                "device": "unknown",
-                "predictions": None,
-                "prediction_today": None,
-                "accuracy": None,
-                "error": str(e)
-            }
-    
-    return results
-
-
-@app.get("/playground/compare_all")
-async def playground_compare_all(accuracy_days: int = 10):
-    """
-    Get predictions from ALL loaded models for ALL watchlist tickers.
-    Returns comprehensive comparison matrix.
-    
-    NOTE: Does NOT call Alpha Vantage API.
-    """
-    if not get_playground_enabled():
-        raise HTTPException(status_code=400, detail="Model Playground is disabled. Enable it in Settings first.")
-
-    # Auto-load models if playground is enabled but models aren't loaded yet
-    if not model_loader.loaded_models:
-        logger.info("Auto-loading models for playground...")
-        model_loader.enable()
-        model_loader.load_all_models()
-
-        if not model_loader.loaded_models:
-            raise HTTPException(status_code=500, detail="Failed to load models. Check server logs.")
-
-    watchlist = await get_watchlist()
-    results = {}
-    
-    for ticker in watchlist:
-        try:
-            data = await playground_compare(ticker, accuracy_days=accuracy_days)
-            results[ticker] = data
-        except Exception as e:
-            logger.error(f"Compare all error for {ticker}: {e}")
-            results[ticker] = {"error": str(e)}
-            
-    return {"tickers": results}
-
+# =============================================================================
+# NOTE: Model Playground endpoints are in routers/playground.py
+# The following endpoints are served by the playground router:
+#   - GET /models
+#   - GET/POST /settings/playground
+#   - GET /playground/compare/{ticker}
+#   - GET /playground/compare_all
+#   - GET /playground/explain/{ticker}/{model_version}
+# =============================================================================
