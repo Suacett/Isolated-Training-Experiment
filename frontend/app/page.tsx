@@ -32,6 +32,13 @@ interface WatchlistItem {
   is_favorite: boolean;
 }
 
+interface MarketStatus {
+  regime: string;
+  exposure: number;
+  vix: number | null;
+  timestamp?: string;
+}
+
 export default function Home() {
   const [configured, setConfigured] = useState<boolean | null>(null);
   const [isSetupOpen, setIsSetupOpen] = useState(false);
@@ -42,6 +49,7 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [favorites, setFavorites] = useState<Set<string>>(new Set());
+  const [marketStatus, setMarketStatus] = useState<MarketStatus | null>(null);
 
   const [lastSync, setLastSync] = useState<Date | null>(null);
 
