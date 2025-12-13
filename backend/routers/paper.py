@@ -327,3 +327,170 @@ async def reset_and_simulate(
             "message": f"Failed to start simulation: {str(e)}",
             "error": str(e)
         }
+
+
+# =============================================================================
+# PORTFOLIO COMPARISON ENDPOINTS
+# =============================================================================
+
+# Portfolio configuration metadata (matching seed_multi_portfolio.py)
+PORTFOLIO_CONFIGS = {
+    "v9_golden_2020": {
+        "display_name": "🏆 Golden Config",
+        "description": "Current production settings. Balanced risk/reward.",
+        "parameters": {"vix": 30, "top_k": 10, "correlation": 0.60, "rebalance": 5},
+    },
+    "v9_aggressive": {
+        "display_name": "🔥 Aggressive",
+        "description": "Higher VIX tolerance, more holdings, looser correlation.",
+        "parameters": {"vix": 40, "top_k": 15, "correlation": 0.80, "rebalance": 5},
+    },
+    "v9_conservative": {
+        "display_name": "🛡️ Conservative", 
+        "description": "Exit earlier, fewer holdings, strict diversification.",
+        "parameters": {"vix": 25, "top_k": 5, "correlation": 0.40, "rebalance": 5},
+    },
+    "v9_no_vix": {
+        "display_name": "⚠️ No VIX Filter",
+        "description": "VIX filter disabled. Full exposure to crashes.",
+        "parameters": {"vix": 999, "top_k": 10, "correlation": 0.60, "rebalance": 5},
+    },
+    "v9_daily": {
+        "display_name": "⚡ Daily Rebalance",
+        "description": "Rebalance every day. Higher turnover.",
+        "parameters": {"vix": 30, "top_k": 10, "correlation": 0.60, "rebalance": 1},
+    },
+    "v9_covid_2020": {
+        "display_name": "🦠 COVID Crash",
+        "description": "2018-2023: March 2020 crash in MIDDLE.",
+        "parameters": {"vix": 30, "top_k": 10, "correlation": 0.60, "rebalance": 5, "period": "2018-2023"},
+    },
+    "v9_crisis_2008": {
+        "display_name": "💥 2008 Crisis",
+        "description": "2006-2011: Worst financial crisis since Great Depression.",
+        "parameters": {"vix": 30, "top_k": 10, "correlation": 0.60, "rebalance": 5, "period": "2006-2011"},
+    },
+    "v9_bear_2022": {
+        "display_name": "🐻 2022 Bear",
+        "description": "2020-2025: COVID crash + tech bear market.",
+        "parameters": {"vix": 30, "top_k": 10, "correlation": 0.60, "rebalance": 5, "period": "2020-2025"},
+    },
+    "v9_ultimate_20yr": {
+        "display_name": "📊 20-Year Ultimate",
+        "description": "2005-2024: Covers 2008, 2020, AND 2022 crashes.",
+        "parameters": {"vix": 30, "top_k": 10, "correlation": 0.60, "rebalance": 5, "period": "2005-2024"},
+    },
+    # Also include the existing golden session
+    "v9_golden_2025": {
+        "display_name": "🏆 Golden (Current)",
+        "description": "Active production portfolio.",
+        "parameters": {"vix": 30, "top_k": 10, "correlation": 0.60, "rebalance": 5},
+    },
+}
+
+
+@router.get("/portfolios/compare")
+async def get_portfolio_comparison(db: AsyncSession = Depends(get_db)):
+    """
+    Get all V9 portfolio sessions with comparison metrics.
+    Returns performance data for each portfolio configuration.
+    """
+    from sqlalchemy import func
+    from services.db import PaperPortfolioHistory
+    
+    results = []
+    
+    for session_id, config in PORTFOLIO_CONFIGS.items():
+        try:
+            # Get portfolio summary
+            portfolio_result = await db.execute(
+                select(PaperPortfolio).where(PaperPortfolio.session_id == session_id)
+            )
+            portfolio = portfolio_result.scalar_one_or_none()
+            
+            if not portfolio:
+                continue
+            
+            # Get trade count
+            trade_count_result = await db.execute(
+                select(func.count(PaperTrade.id)).where(PaperTrade.session_id == session_id)
+            )
+            trade_count = trade_count_result.scalar() or 0
+            
+            # Get history for metrics
+            history_result = await db.execute(
+                select(PaperPortfolioHistory)
+                .where(PaperPortfolioHistory.session_id == session_id)
+                .order_by(PaperPortfolioHistory.date)
+            )
+            history = history_result.scalars().all()
+            
+            # Calculate metrics
+            start_value = history[0].total_value if history else 10000.0
+            final_value = portfolio.total_value
+            total_return = ((final_value / start_value) - 1) * 100
+            
+            # Calculate max drawdown
+            max_drawdown = 0.0
+            peak = start_value
+            for h in history:
+                if h.total_value > peak:
+                    peak = h.total_value
+                drawdown = ((peak - h.total_value) / peak) * 100
+                if drawdown > max_drawdown:
+                    max_drawdown = drawdown
+            
+            # Get date range
+            start_date = history[0].date.isoformat() if history else None
+            end_date = history[-1].date.isoformat() if history else None
+            
+            results.append({
+                "session_id": session_id,
+                "display_name": config["display_name"],
+                "description": config["description"],
+                "parameters": config["parameters"],
+                "start_value": start_value,
+                "final_value": final_value,
+                "total_return": round(total_return, 2),
+                "max_drawdown": round(max_drawdown, 2),
+                "trade_count": trade_count,
+                "start_date": start_date,
+                "end_date": end_date,
+                "holdings_count": len([]),  # Could add actual count
+            })
+            
+        except Exception as e:
+            # Portfolio doesn't exist yet
+            pass
+    
+    # Sort by total return (best first)
+    results.sort(key=lambda x: x["total_return"], reverse=True)
+    
+    return {
+        "portfolios": results,
+        "count": len(results),
+        "available_configs": list(PORTFOLIO_CONFIGS.keys())
+    }
+
+
+@router.get("/portfolios/{session_id}/history")
+async def get_portfolio_session_history(session_id: str, db: AsyncSession = Depends(get_db)):
+    """Get historical equity curve for a specific portfolio session."""
+    from services.db import PaperPortfolioHistory
+    
+    if session_id not in PORTFOLIO_CONFIGS:
+        raise HTTPException(status_code=404, detail=f"Unknown session: {session_id}")
+    
+    result = await db.execute(
+        select(PaperPortfolioHistory)
+        .where(PaperPortfolioHistory.session_id == session_id)
+        .order_by(PaperPortfolioHistory.date)
+    )
+    history = result.scalars().all()
+    
+    return [{
+        "date": h.date.isoformat(),
+        "value": h.total_value,
+        "equity": h.equity_value,
+        "cash": h.cash_balance
+    } for h in history]

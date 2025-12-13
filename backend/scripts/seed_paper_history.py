@@ -646,6 +646,10 @@ async def seed_history(force=False):
         logger.info(f"Current Holdings: {len(holdings)}")
         
         # Save final portfolio state
+        # Delete any existing portfolio first (in case cleanup was incomplete)
+        await session.execute(delete(PaperPortfolio).where(PaperPortfolio.session_id == CONFIG['SESSION_ID']))
+        await session.execute(delete(PaperHolding).where(PaperHolding.session_id == CONFIG['SESSION_ID']))
+        
         portfolio = PaperPortfolio(
             session_id=CONFIG['SESSION_ID'],
             cash_balance=current_cash,

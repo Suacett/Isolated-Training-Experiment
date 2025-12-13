@@ -78,7 +78,7 @@ export default function Home() {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        // 1. Fetch Status (Summary, Holdings, Trades)
+        // 1. Fetch Status (Summary, Holdings)
         const statusRes = await fetch(`${API_BASE}/paper/status`);
         if (!statusRes.ok) throw new Error("Failed to fetch status");
         const statusData = await statusRes.json();
@@ -93,9 +93,18 @@ export default function Home() {
           daily_pnl_pct: statusData.pnl_pct
         });
         setHoldings(statusData.holdings);
-        setTrades(statusData.recent_trades);
 
-        // 2. Fetch History (Chart)
+        // 2. Fetch ALL Trades (up to 500 - covers 5 years of weekly rebalancing)
+        const tradesRes = await fetch(`${API_BASE}/paper/trades?limit=500`);
+        if (tradesRes.ok) {
+          const tradesData = await tradesRes.json();
+          setTrades(tradesData.trades || []);
+        } else {
+          // Fallback to recent_trades from status
+          setTrades(statusData.recent_trades || []);
+        }
+
+        // 3. Fetch History (Chart)
         const histRes = await fetch(`${API_BASE}/paper/history`);
         if (histRes.ok) {
           const histData = await histRes.json();
