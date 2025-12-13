@@ -347,7 +347,7 @@ export default function Home() {
           </div>
 
           {/* Content */}
-          <div className="overflow-x-auto">
+          <div className="overflow-visible">
 
             {/* HOLDINGS TABLE */}
             {activeTab === "holdings" && (

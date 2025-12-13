@@ -24,7 +24,7 @@ export default function InfoMarker({ title, simple, technical, className = "" }:
       />
 
       {show && (
-        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 p-3 bg-[#1A1A24] border border-white/10 rounded-lg shadow-xl z-[100] animate-fade-in pointer-events-none">
+        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 p-3 bg-[#1A1A24] border border-white/10 rounded-lg shadow-xl z-[999] animate-fade-in pointer-events-none">
           <div className="text-amber-400 font-semibold text-xs mb-1">{title}</div>
           <div className="text-white text-xs mb-2 leading-relaxed">{simple}</div>
           <div className="text-zinc-400 text-[10px] italic border-t border-white/10 pt-2">
