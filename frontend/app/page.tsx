@@ -1,12 +1,12 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { ArrowUpRight, ArrowDownRight, Wallet, TrendingUp, DollarSign, Percent, FileText, Activity } from "lucide-react";
+import { ArrowUpRight, ArrowDownRight, Wallet, TrendingUp, DollarSign, Percent, Unlock, AlertTriangle, Info, FileText, Activity } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, AreaChart, Area } from "recharts";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
+import Link from "next/link";
 import SmartTooltip from "./components/SmartTooltip";
-import InfoMarker from "./components/InfoMarker";
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -262,27 +262,31 @@ export default function Home() {
               <div className="flex items-center gap-2 mb-2">
                 <DollarSign size={16} className="text-emerald-500" />
                 <span className="text-zinc-500 text-xs uppercase tracking-wider font-medium">Total PnL</span>
-                <InfoMarker
-                  title="Total Profit & Loss"
-                  simple="Your total profit or loss since the portfolio started."
-                  technical="Calculated as (Current Total Value - Starting Capital). Updates in real-time as holdings change."
-                />
+                <SmartTooltip
+                  term="Total Profit & Loss"
+                  traderExplanation="Your total profit or loss since the portfolio started."
+                  academicExplanation="Calculated as (Current Total Value - Starting Capital). Updates in real-time as holdings change."
+                >
+                  <Info size={14} className="text-zinc-500 hover:text-amber-400 transition-colors ml-1 cursor-help" />
+                </SmartTooltip>
               </div>
               <div className={cn("text-2xl font-mono font-bold", (summary?.daily_pnl || 0) >= 0 ? "text-emerald-400" : "text-rose-400")}>
-                {(summary?.daily_pnl || 0) >= 0 ? "+" : "-"}${Math.abs(summary?.daily_pnl || 0).toLocaleString()}
+                {(summary?.daily_pnl || 0) >= 0 ? "+" : ""}${Math.abs(summary?.daily_pnl || 0).toLocaleString()}
               </div>
             </div>
 
             {/* Sharpe Ratio */}
             <div className="p-5 rounded-xl bg-[#12121A] border border-white/[0.08] flex flex-col justify-center h-[calc(33%-11px)]">
               <div className="flex items-center gap-2 mb-2">
-                <Activity size={16} className="text-amber-500" />
+                <Unlock size={16} className="text-amber-500" />
                 <span className="text-zinc-500 text-xs uppercase tracking-wider font-medium">Sharpe Ratio (1y)</span>
-                <InfoMarker
-                  title="Sharpe Ratio"
-                  simple="Risk-adjusted return metric. Higher is better. Values > 1.0 indicate good performance."
-                  technical="Sharpe = (Rp - Rf) / σp. Measures excess return per unit of volatility."
-                />
+                <SmartTooltip
+                  term="Sharpe Ratio"
+                  traderExplanation="Risk-adjusted return metric. Higher is better. Values > 1.0 indicate good performance."
+                  academicExplanation="Sharpe = (Rp - Rf) / σp. Measures excess return per unit of volatility."
+                >
+                  <Info size={14} className="text-zinc-500 hover:text-amber-400 transition-colors ml-1 cursor-help" />
+                </SmartTooltip>
               </div>
 
               <div className="text-2xl font-mono font-bold text-zinc-200">
@@ -295,11 +299,13 @@ export default function Home() {
               <div className="flex items-center gap-2 mb-2">
                 <Percent size={16} className="text-indigo-500" />
                 <span className="text-zinc-500 text-xs uppercase tracking-wider font-medium">Alpha</span>
-                <InfoMarker
-                  title="Alpha"
-                  simple="Excess return vs S&P 500 benchmark. Positive alpha means beating the market."
-                  technical="Alpha (α) = Rp - [Rf + β(Rm - Rf)]. Active return on investment adjusted for market risk."
-                />
+                <SmartTooltip
+                  term="Alpha (α)"
+                  traderExplanation="Excess return vs S&P 500 benchmark. Positive alpha means beating the market."
+                  academicExplanation="Alpha (α) = Rp - [Rf + β(Rm - Rf)]. Active return on investment adjusted for market risk."
+                >
+                  <Info size={14} className="text-zinc-500 hover:text-amber-400 transition-colors ml-1 cursor-help" />
+                </SmartTooltip>
               </div>
 
               <div className="text-2xl font-mono font-bold text-indigo-400">
@@ -337,11 +343,13 @@ export default function Home() {
               <span>Cash: <span className="text-zinc-300 ml-1">${(summary?.cash_balance || 0).toLocaleString()}</span></span>
               <span className="flex items-center">
                 Exposure: <span className="text-zinc-300 ml-1">${(summary?.equity_value || 0).toLocaleString()}</span>
-                <InfoMarker
-                  title="Exposure"
-                  simple="Total market value of all stock holdings, excluding cash."
-                  technical="Formula: sum of (quantity × current_price) for each position. Does not include cash balance."
-                />
+                <SmartTooltip
+                  term="Exposure"
+                  traderExplanation="Total market value of all stock holdings, excluding cash."
+                  academicExplanation="Formula: sum of (quantity × current_price) for each position. Does not include cash balance."
+                >
+                  <Info size={14} className="text-zinc-500 hover:text-amber-400 transition-colors ml-1 cursor-help" />
+                </SmartTooltip>
               </span>
             </div>
           </div>
@@ -362,11 +370,13 @@ export default function Home() {
                     <th className="px-6 py-4 text-right">PnL</th>
                     <th className="px-6 py-4 text-left pl-8 w-1/3 flex items-center gap-1">
                       Why?
-                      <InfoMarker
-                        title="Trade Reasoning"
-                        simple="Shows V9's AI ranking and correlation data that triggered this buy/sell decision."
-                        technical="Rank: V9 Transformer relative strength score (0-1). Corr: Average correlation with other holdings. Lower corr = better diversification."
-                      />
+                      <SmartTooltip
+                        term="Trade Reasoning"
+                        traderExplanation="Shows V9's AI ranking and correlation data that triggered this buy/sell decision."
+                        academicExplanation="Rank: V9 Transformer relative strength score (0-1). Corr: Average correlation with other holdings. Lower corr = better diversification."
+                      >
+                        <Info size={14} className="text-zinc-500 hover:text-amber-400 transition-colors ml-1 cursor-help" />
+                      </SmartTooltip>
                     </th>
                   </tr>
                 </thead>

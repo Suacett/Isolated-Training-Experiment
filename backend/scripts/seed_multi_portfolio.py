@@ -274,8 +274,18 @@ async def run_portfolio_simulation(
     vix_df.columns = [c.lower() for c in vix_df.columns]
     
     # Process SPY/VIX
-    spy_data = process_spy_data(spy_df)
-    vix_data = process_vix_data(vix_df) if not vix_df.empty else None
+    # Process SPY/VIX
+    if spy_df.empty:
+        logger.error("⚠️ CRITICAL: SPY data fetch failed! Simulation will be invalid.")
+        spy_data = None
+    else:
+        spy_data = process_spy_data(spy_df)
+        
+    if vix_df.empty:
+        logger.warning("⚠️ VIX data fetch failed! Using default VIX=20.")
+        vix_data = None
+    else:
+        vix_data = process_vix_data(vix_df)
     
     # Get trading days from SPY
     trading_days = spy_df['date'].tolist()

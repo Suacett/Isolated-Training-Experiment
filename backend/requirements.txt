@@ -17,3 +17,4 @@ yfinance
 lxml
 html5lib
 apscheduler
+beautifulsoup4

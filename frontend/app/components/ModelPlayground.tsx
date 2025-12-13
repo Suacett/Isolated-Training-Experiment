@@ -17,7 +17,7 @@ import {
     XCircle,
     CheckCircle,
 } from "lucide-react";
-import InfoTooltip from "./InfoTooltip";
+import SmartTooltip from "./SmartTooltip";
 
 const API_BASE = "http://localhost:8000";
 
@@ -459,10 +459,13 @@ export default function ModelPlayground({ onBack }: PlaygroundPageProps) {
                                                     <div className="flex justify-between items-center">
                                                         <div className="flex items-center gap-1">
                                                             <span>AI Confidence:</span>
-                                                            <InfoTooltip
-                                                                label="Confidence"
-                                                                traderView="How sure the AI is (0-100%). Higher = more certain about the prediction."
-                                                            />
+                                                            <SmartTooltip
+                                                                term="Confidence"
+                                                                traderExplanation="How sure the AI is (0-100%). Higher = more certain about the prediction."
+                                                                academicExplanation="Softmax probability score from the final classification layer."
+                                                            >
+                                                                <Info size={14} className="text-zinc-500 hover:text-amber-400 transition-colors ml-1 cursor-help" />
+                                                            </SmartTooltip>
                                                         </div>
                                                         <span className="text-emerald-400 font-bold">
                                                             {comparisons[selectedTicker]?.signals?.confidence?.toFixed(1) ?? '--'}%
@@ -471,10 +474,13 @@ export default function ModelPlayground({ onBack }: PlaygroundPageProps) {
                                                     <div className="flex justify-between items-center">
                                                         <div className="flex items-center gap-1">
                                                             <span>Strength vs Market:</span>
-                                                            <InfoTooltip
-                                                                label="Relative Strength"
-                                                                traderView="Is this stock outperforming (+) or underperforming (-) the S&P 500?"
-                                                            />
+                                                            <SmartTooltip
+                                                                term="Relative Strength"
+                                                                traderExplanation="Is this stock outperforming (+) or underperforming (-) the S&P 500?"
+                                                                academicExplanation="RelStrength = Stock_Return_20d - SPY_Return_20d."
+                                                            >
+                                                                <Info size={14} className="text-zinc-500 hover:text-amber-400 transition-colors ml-1 cursor-help" />
+                                                            </SmartTooltip>
                                                         </div>
                                                         <span className={getStrengthColor(comparisons[selectedTicker]?.signals?.relative_strength)}>
                                                             {(comparisons[selectedTicker]?.signals?.relative_strength ?? 0) > 0 ? '+' : ''}
@@ -485,10 +491,13 @@ export default function ModelPlayground({ onBack }: PlaygroundPageProps) {
                                                     <div className="flex justify-between items-center">
                                                         <div className="flex items-center gap-1">
                                                             <span>Similarity to Others:</span>
-                                                            <InfoTooltip
-                                                                label="Correlation"
-                                                                traderView="How much this stock moves with others in your portfolio. Low = good diversification."
-                                                            />
+                                                            <SmartTooltip
+                                                                term="Correlation"
+                                                                traderExplanation="How much this stock moves with others in your portfolio. Low = good diversification."
+                                                                academicExplanation="Pairwise Pearson correlation coefficient with existing portfolio assets."
+                                                            >
+                                                                <Info size={14} className="text-zinc-500 hover:text-amber-400 transition-colors ml-1 cursor-help" />
+                                                            </SmartTooltip>
                                                         </div>
                                                         <span className="text-amber-400">
                                                             {comparisons[selectedTicker]?.signals?.similarity?.toFixed(1) ?? '--'}%
@@ -498,10 +507,13 @@ export default function ModelPlayground({ onBack }: PlaygroundPageProps) {
                                                     <div className="flex justify-between items-center">
                                                         <div className="flex items-center gap-1">
                                                             <span>Market Mood:</span>
-                                                            <InfoTooltip
-                                                                label="Volatility"
-                                                                traderView="Is the market calm or chaotic? Low Vol = calm, High Vol = panic."
-                                                            />
+                                                            <SmartTooltip
+                                                                term="Volatility"
+                                                                traderExplanation="Is the market calm or chaotic? Low Vol = calm, High Vol = panic."
+                                                                academicExplanation="Implied volatility derived from S&P 500 options (VIX Index)."
+                                                            >
+                                                                <Info size={14} className="text-zinc-500 hover:text-amber-400 transition-colors ml-1 cursor-help" />
+                                                            </SmartTooltip>
                                                         </div>
                                                         <span className="text-blue-400">
                                                             {comparisons[selectedTicker]?.signals?.market_mood ?? 'Unknown'}

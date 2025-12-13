@@ -102,6 +102,42 @@ TICKERS = [
     "XOM", "CVX", "COP", "NEE", "SO", "CAT", "DE", "UNP", "HON", "RTX",
 ]
 
+
+def fetch_sp500_tickers() -> list:
+    """
+    Fetch full S&P 500 ticker list from Wikipedia.
+    Returns ~500 tickers for realistic backtesting.
+    """
+    import requests
+    from bs4 import BeautifulSoup
+    
+    logger.info("Fetching S&P 500 ticker list from Wikipedia...")
+    
+    try:
+        url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+        response = requests.get(url, timeout=10)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        table = soup.find('table', {'class': 'wikitable', 'id': 'constituents'})
+        if not table:
+            table = soup.find('table', {'class': 'wikitable'})
+        
+        tickers = []
+        for row in table.find_all('tr')[1:]:  # Skip header
+            cells = row.find_all('td')
+            if cells:
+                ticker = cells[0].text.strip()
+                # Clean ticker (remove special chars, convert BRK.B -> BRK-B)
+                ticker = ticker.replace('.', '-')
+                tickers.append(ticker)
+        
+        logger.info(f"Fetched {len(tickers)} S&P 500 tickers")
+        return tickers
+    except Exception as e:
+        logger.warning(f"Failed to fetch S&P 500 list: {e}. Using default 60 tickers.")
+        return TICKERS
+
+
 # Model paths
 MODEL_PATH = BACKEND_DIR / "models" / "transformer_v9_best.pth"
 SCALER_PATH = BACKEND_DIR / "models" / "scaler_v9.pkl"
@@ -448,9 +484,21 @@ async def seed_history(force=False):
         stock_data = fetch_yfinance_data(TICKERS, start_date, end_date)
         spy_df, vix_df = fetch_macro_data(start_date, end_date)
         
-        # Process macro data
+        # Process macro data - CRITICAL for V9's rel_strength feature
         spy_data = process_spy_data(spy_df) if spy_df is not None else None
         vix_data = process_vix_data(vix_df) if vix_df is not None else None
+        
+        # Validate macro data (V9 needs SPY for relative strength)
+        if spy_data is None:
+            logger.error("⚠️ CRITICAL: SPY data not fetched! V9 will be 'blind' without relative strength features.")
+            logger.error("Check internet connectivity (VPN off?) and try again.")
+        else:
+            logger.info(f"✅ SPY data loaded: {len(spy_data['spy_ret_5d'])} days")
+        
+        if vix_data is None:
+            logger.warning("⚠️ VIX data not fetched. Using default VIX=20 for all days.")
+        else:
+            logger.info(f"✅ VIX data loaded: {len(vix_data)} days")
         
         # 4. Pre-compute features (if model available)
         if model is not None and scaler is not None:
@@ -693,11 +741,20 @@ if __name__ == "__main__":
                         help="Session ID for this backtest (default: v9_golden_2025)")
     parser.add_argument("--force", action="store_true",
                         help="Force re-seed even if session data exists")
+    parser.add_argument("--sp500", action="store_true",
+                        help="Use full S&P 500 (~500 stocks) instead of curated 60")
     args = parser.parse_args()
 
     # Update CONFIG based on arguments
     CONFIG["SIMULATION_DAYS"] = args.years * 252  # 252 trading days per year
     CONFIG["SESSION_ID"] = args.session_id
+    
+    # Use full S&P 500 if requested
+    if args.sp500:
+        TICKERS = fetch_sp500_tickers()
+        logger.info(f"🚀 FULL S&P 500 MODE: {len(TICKERS)} stocks")
+    else:
+        logger.info(f"Standard mode: {len(TICKERS)} curated stocks")
 
     logger.info(f"Configuration: {args.years} year(s) = {CONFIG['SIMULATION_DAYS']} trading days")
     logger.info(f"Session ID: {CONFIG['SESSION_ID']}")

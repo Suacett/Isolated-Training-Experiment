@@ -35,7 +35,7 @@ export default function SmartTooltip({
 
             {/* Popover */}
             {isVisible && (
-                <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-72 bg-[#1A1A24] border border-white/10 rounded-xl shadow-2xl z-50 overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-200">
+                <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-72 bg-[#1A1A24] border border-white/10 rounded-xl shadow-2xl z-[999] overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-200">
 
                     {/* Header: Term & Value */}
                     <div className="px-4 py-3 border-b border-white/5 bg-[#12121A]">

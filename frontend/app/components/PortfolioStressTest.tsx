@@ -23,8 +23,9 @@ import {
     Play,
     Terminal,
     X,
+    Info,
 } from "lucide-react";
-import InfoTooltip from "./InfoTooltip";
+import SmartTooltip from "./SmartTooltip";
 import {
     LineChart,
     Line,
@@ -116,11 +117,13 @@ const PARAM_TOOLTIPS = {
 function InfoBubble({ param }: { param: keyof typeof PARAM_TOOLTIPS }) {
     const info = PARAM_TOOLTIPS[param];
     return (
-        <InfoTooltip
-            label={info.title}
-            traderView={info.simple}
-            academicView={info.technical}
-        />
+        <SmartTooltip
+            term={info.title}
+            traderExplanation={info.simple}
+            academicExplanation={info.technical}
+        >
+            <Info size={14} className="text-zinc-500 hover:text-amber-400 transition-colors ml-1" />
+        </SmartTooltip>
     );
 }
 
@@ -384,8 +387,8 @@ export default function PortfolioComparison({ onBack }: PortfolioComparisonProps
                                     if (!compareMode) setSelectedForCompare([]);
                                 }}
                                 className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${compareMode
-                                        ? "bg-amber-500/20 text-amber-400 border border-amber-500/50"
-                                        : "bg-zinc-800 hover:bg-zinc-700 text-zinc-300"
+                                    ? "bg-amber-500/20 text-amber-400 border border-amber-500/50"
+                                    : "bg-zinc-800 hover:bg-zinc-700 text-zinc-300"
                                     }`}
                             >
                                 <Layers size={16} />
@@ -563,12 +566,12 @@ export default function PortfolioComparison({ onBack }: PortfolioComparisonProps
                             <div
                                 key={portfolio.session_id}
                                 className={`bg-zinc-900/50 rounded-xl border transition-all ${compareMode && selectedForCompare.includes(portfolio.session_id)
-                                        ? "border-amber-500"
-                                        : portfolio.session_id.includes("ultimate")
-                                            ? "border-teal-500/50"
-                                            : idx === 0
-                                                ? "border-emerald-500/50"
-                                                : "border-zinc-800 hover:border-amber-500/50"
+                                    ? "border-amber-500"
+                                    : portfolio.session_id.includes("ultimate")
+                                        ? "border-teal-500/50"
+                                        : idx === 0
+                                            ? "border-emerald-500/50"
+                                            : "border-zinc-800 hover:border-amber-500/50"
                                     }`}
                             >
                                 <div
