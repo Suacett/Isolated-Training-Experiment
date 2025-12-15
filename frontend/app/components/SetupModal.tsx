@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { X, CheckCircle2, XCircle, Cpu, RefreshCw, FlaskConical, AlertTriangle } from "lucide-react";
 import { useToast } from "./Toast";
+import { getApiUrl } from "@/config/api";
 
 interface SetupModalProps {
     onClose?: () => void;
@@ -27,7 +28,7 @@ function PlaygroundToggle() {
     const { showToast } = useToast();
 
     useEffect(() => {
-        fetch("http://localhost:8000/settings/playground")
+        fetch(getApiUrl("/settings/playground"))
             .then(res => res.json())
             .then(data => {
                 setEnabled(data.enabled);
@@ -39,7 +40,7 @@ function PlaygroundToggle() {
     const handleToggle = async () => {
         setToggling(true);
         try {
-            const res = await fetch(`http://localhost:8000/settings/playground?enabled=${!enabled}`, {
+            const res = await fetch(getApiUrl(`/settings/playground?enabled=${!enabled}`), {
                 method: "POST"
             });
             const data = await res.json();
@@ -99,7 +100,7 @@ export default function SetupModal({ onClose }: SetupModalProps) {
 
     useEffect(() => {
         // Fetch system status
-        fetch("http://localhost:8000/status")
+        fetch(getApiUrl("/status"))
             .then(res => res.json())
             .then(data => {
                 setKeyStatus({
@@ -109,7 +110,7 @@ export default function SetupModal({ onClose }: SetupModalProps) {
             .catch(console.error);
 
         // Fetch AI status
-        fetch("http://localhost:8000/status/ai")
+        fetch(getApiUrl("/status/ai"))
             .then(res => res.json())
             .then(data => setAIStatus(data))
             .catch(console.error);
@@ -132,7 +133,7 @@ export default function SetupModal({ onClose }: SetupModalProps) {
                 ? { ALPHA_VANTAGE_KEYS: alphaVantageKeys }
                 : { ALPHA_VANTAGE_KEY: alphaVantageKey };
 
-            const res = await fetch("http://localhost:8000/settings/keys", {
+            const res = await fetch(getApiUrl("/settings/keys"), {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(payload),
@@ -233,14 +234,14 @@ export default function SetupModal({ onClose }: SetupModalProps) {
                                 showToast("Fetching today's prices...", "info");
                                 setLoading(true);
                                 try {
-                                    const watchlistRes = await fetch("http://localhost:8000/stocks/");
+                                    const watchlistRes = await fetch(getApiUrl("/stocks/"));
                                     const watchlist = await watchlistRes.json();
 
                                     let successCount = 0;
                                     let errorCount = 0;
                                     for (const ticker of watchlist) {
                                         try {
-                                            const res = await fetch(`http://localhost:8000/ingest/${ticker}?mode=daily`, { method: "POST" });
+                                            const res = await fetch(getApiUrl(`/ingest/${ticker}?mode=daily`), { method: "POST" });
                                             if (res.ok) {
                                                 successCount++;
                                             } else {
@@ -279,7 +280,7 @@ export default function SetupModal({ onClose }: SetupModalProps) {
                                 showToast("Starting 5-year portfolio simulation... This will take ~15 seconds.", "info");
                                 setLoading(true);
                                 try {
-                                    const res = await fetch("http://localhost:8000/paper/reset-and-simulate", {
+                                    const res = await fetch(getApiUrl("/paper/reset-and-simulate"), {
                                         method: "POST",
                                         headers: { "Content-Type": "application/json" },
                                         body: JSON.stringify({ years: 5, force: true })
@@ -443,7 +444,7 @@ export default function SetupModal({ onClose }: SetupModalProps) {
                                 setResetting(true);
 
                                 try {
-                                    const res = await fetch("http://localhost:8000/settings/keys", {
+                                    const res = await fetch(getApiUrl("/settings/keys"), {
                                         method: "DELETE",
                                     });
                                     if (res.ok) {

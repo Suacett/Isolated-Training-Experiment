@@ -16,6 +16,11 @@ from services.lstm_model import LSTMModel
 from services.lstm_model_v7 import LSTMModelV7
 from services.scaler import FeatureScaler
 from services.model_metadata import get_available_models, get_model_path, get_scaler_path, ModelInfo
+from services.device_utils import get_device, has_sufficient_gpu_memory
+from exceptions import (
+    ModelLoadError, ScalerMissingError, InsufficientMemoryError,
+    CheckpointCorruptedError
+)
 
 logger = logging.getLogger(__name__)
 
@@ -160,9 +165,15 @@ class MultiModelLoader:
             
             logger.info(f"✅ Loaded {info.display_name} on {device.upper()}")
             return True
-            
+
+        except FileNotFoundError as e:
+            logger.error(f"❌ Model or scaler file not found for {info.version}: {e}")
+            return False
+        except ScalerMissingError as e:
+            logger.error(f"❌ Scaler missing for {info.version}: {e}")
+            return False
         except Exception as e:
-            logger.error(f"❌ Failed to load {info.version}: {e}")
+            logger.error(f"❌ Unexpected error loading {info.version}: {e}")
             return False
     
     def unload_model(self, version: str):

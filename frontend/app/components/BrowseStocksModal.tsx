@@ -2,8 +2,8 @@
 
 import React, { useState, useEffect } from "react";
 import { X, Search, Plus, Check, Star, Loader2, ChevronDown, ChevronUp } from "lucide-react";
+import { getApiUrl } from "@/config/api";
 
-const API_BASE = "http://localhost:8000";
 
 interface BrowseStock {
     ticker: string;
@@ -38,7 +38,7 @@ export default function BrowseStocksModal({ isOpen, onClose, onAdd }: BrowseStoc
     const fetchBrowseStocks = async () => {
         setIsLoading(true);
         try {
-            const res = await fetch(`${API_BASE}/stocks/browse`);
+            const res = await fetch(getApiUrl("/stocks/browse"));
             if (res.ok) {
                 const data = await res.json();
                 setStocks(data);

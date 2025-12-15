@@ -11,6 +11,7 @@ import pandas as pd
 from pathlib import Path
 from typing import Optional, Union
 import logging
+from exceptions import ScalerMissingError, ScalerCorruptedError
 
 logger = logging.getLogger(__name__)
 
@@ -166,6 +167,55 @@ class FeatureScaler:
             'std': self.scaler.scale_,
             'feature_names': self.feature_names
         }
+
+    @staticmethod
+    def load_scaler_safe(scaler_path: str):
+        """
+        Safely load scaler with validation and specific error handling.
+
+        This is the recommended method for loading scalers in production code.
+        Replaces direct pickle.load() calls with proper error handling.
+
+        Args:
+            scaler_path: Path to the scaler pickle file
+
+        Returns:
+            StandardScaler object
+
+        Raises:
+            ScalerMissingError: If scaler file not found
+            ScalerCorruptedError: If scaler file is corrupted or invalid
+        """
+        from sklearn.preprocessing import StandardScaler
+
+        path = Path(scaler_path)
+        if not path.exists():
+            raise ScalerMissingError(f"Scaler file not found: {scaler_path}")
+
+        try:
+            with open(scaler_path, 'rb') as f:
+                scaler_data = pickle.load(f)
+
+            if 'scaler' not in scaler_data:
+                raise ScalerCorruptedError("Invalid scaler format: missing 'scaler' key")
+
+            scaler = scaler_data['scaler']
+
+            # Validate it's actually a StandardScaler
+            if not isinstance(scaler, StandardScaler):
+                raise ScalerCorruptedError(
+                    f"Expected StandardScaler, got {type(scaler).__name__}"
+                )
+
+            logger.info(f"✅ Scaler loaded safely from {scaler_path}")
+            return scaler
+
+        except pickle.UnpicklingError as e:
+            raise ScalerCorruptedError(f"Corrupted scaler file: {e}") from e
+        except Exception as e:
+            if isinstance(e, (ScalerMissingError, ScalerCorruptedError)):
+                raise
+            raise ScalerCorruptedError(f"Failed to load scaler: {e}") from e
 
 
 # Global scaler instance

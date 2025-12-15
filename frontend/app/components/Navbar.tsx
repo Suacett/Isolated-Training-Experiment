@@ -6,8 +6,8 @@ import { usePathname } from "next/navigation";
 import { Terminal, Brain, FlaskConical, ScrollText, Settings, LayoutDashboard, ScanSearch, BarChart3 } from "lucide-react";
 import SetupModal from "./SetupModal";
 import LogViewer from "./LogViewer";
+import { getApiUrl } from "@/config/api";
 
-const API_BASE = "http://localhost:8000";
 
 export default function Navbar() {
     const pathname = usePathname();
@@ -18,7 +18,7 @@ export default function Navbar() {
 
     useEffect(() => {
         // Fetch System Status
-        fetch(`${API_BASE}/status`)
+        fetch(getApiUrl("/status"))
             .then(res => res.json())
             .then(data => setStatus({
                 configured: data.configured,
@@ -27,7 +27,7 @@ export default function Navbar() {
             .catch(console.error);
 
         // Fetch Live Equity
-        fetch(`${API_BASE}/paper/status`)
+        fetch(getApiUrl("/paper/status"))
             .then(res => res.json())
             .then(data => {
                 if (data && data.total_value) {

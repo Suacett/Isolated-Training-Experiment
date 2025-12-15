@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useMemo } from "react";
+import { getApiUrl } from "@/config/api";
 import {
     Brain,
     RefreshCw,
@@ -38,7 +39,6 @@ import {
     ReferenceLine,
 } from "recharts";
 
-const API_BASE = "http://localhost:8000";
 
 interface PortfolioResult {
     session_id: string;
@@ -148,7 +148,7 @@ export default function PortfolioComparison({ onBack }: PortfolioComparisonProps
     const fetchPortfolios = async () => {
         setLoading(true);
         try {
-            const res = await fetch(`${API_BASE}/paper/portfolios/compare`);
+            const res = await fetch(getApiUrl("/paper/portfolios/compare"));
             if (res.ok) {
                 const data = await res.json();
                 setPortfolios(data.portfolios || []);
@@ -166,7 +166,7 @@ export default function PortfolioComparison({ onBack }: PortfolioComparisonProps
 
         setLoadingHistory(sessionId);
         try {
-            const res = await fetch(`${API_BASE}/paper/portfolios/${sessionId}/history`);
+            const res = await fetch(getApiUrl(`/paper/portfolios/${sessionId}/history`));
             if (res.ok) {
                 const data = await res.json();
                 setHistoryData(prev => ({ ...prev, [sessionId]: data }));

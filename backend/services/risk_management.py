@@ -11,13 +11,14 @@ Provides adaptive risk management tools that respect the momentum thesis:
 import pandas as pd
 import numpy as np
 from typing import List, Dict, Tuple, Optional
+from config.constants import ATR_PARAMS, DRAWDOWN_THRESHOLDS, REGIME_PARAMS, VOLATILITY_PARAMS
 
 
 # =============================================================================
 # ATR (Average True Range) CALCULATIONS
 # =============================================================================
 
-def calculate_atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
+def calculate_atr(df: pd.DataFrame, period: int = None) -> pd.Series:
     """
     Calculate Average True Range (ATR) for volatility measurement.
 
@@ -26,11 +27,13 @@ def calculate_atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
 
     Args:
         df: DataFrame with 'high', 'low', 'close' columns
-        period: Lookback period (default 14 days)
+        period: Lookback period (default from ATR_PARAMS)
 
     Returns:
         Series of ATR values
     """
+    if period is None:
+        period = ATR_PARAMS["PERIOD"]
     high = df['high']
     low = df['low']
     close = df['close']
@@ -55,8 +58,8 @@ def get_atr_trailing_stop(
     ticker: str,
     date: pd.Timestamp,
     highest_price: float,
-    multiplier: float = 2.5,
-    atr_period: int = 14
+    multiplier: float = None,
+    atr_period: int = None
 ) -> float:
     """
     Calculate ATR-based trailing stop price.
@@ -73,35 +76,40 @@ def get_atr_trailing_stop(
         ticker: Stock symbol
         date: Current date
         highest_price: Highest price since entry (for trailing)
-        multiplier: ATR multiplier (2.0-3.0 recommended, default 2.5)
-        atr_period: ATR lookback period (default 14)
+        multiplier: ATR multiplier (from ATR_PARAMS)
+        atr_period: ATR lookback period (from ATR_PARAMS)
 
     Returns:
         Stop price (exit if current price falls below this)
     """
+    if multiplier is None:
+        multiplier = ATR_PARAMS["MULTIPLIER"]
+    if atr_period is None:
+        atr_period = ATR_PARAMS["PERIOD"]
+
     if ticker not in stock_data:
-        # Fallback to 12% stop if no data
-        return highest_price * 0.88
+        # Fallback stop if no data
+        return highest_price * ATR_PARAMS["FALLBACK_STOP"]
 
     df = stock_data[ticker]
     df = df[df['date'] <= date].copy()
 
     if len(df) < atr_period + 5:
-        # Not enough data, use 12% fallback
-        return highest_price * 0.88
+        # Not enough data, use fallback
+        return highest_price * ATR_PARAMS["FALLBACK_STOP"]
 
     # Calculate ATR
     atr_series = calculate_atr(df, period=atr_period)
     current_atr = atr_series.iloc[-1]
 
     if pd.isna(current_atr) or current_atr <= 0:
-        return highest_price * 0.88
+        return highest_price * ATR_PARAMS["FALLBACK_STOP"]
 
     # Trailing stop = highest price - (multiplier * ATR)
     stop_price = highest_price - (multiplier * current_atr)
 
-    # Ensure stop is at least 3% below highest (prevent too-tight stops)
-    min_stop = highest_price * 0.97
+    # Ensure stop is at least min threshold below highest (prevent too-tight stops)
+    min_stop = highest_price * ATR_PARAMS["MIN_STOP"]
     stop_price = min(stop_price, min_stop)
 
     return stop_price
@@ -138,13 +146,7 @@ def get_drawdown_exposure(
     """
     if thresholds is None:
         # Default thresholds optimized for HIGH-VOLATILITY momentum
-        thresholds = [
-            (-0.15, 1.00),  # Under 15% DD: full exposure
-            (-0.20, 0.80),  # 15-20% DD: reduce 20%
-            (-0.25, 0.60),  # 20-25% DD: reduce 40%
-            (-0.30, 0.40),  # 25-30% DD: reduce 60%
-            (-1.00, 0.20),  # >30% DD: defensive (not 0% - allow recovery)
-        ]
+        thresholds = DRAWDOWN_THRESHOLDS
 
     if len(portfolio_values) < 2:
         return 1.0  # No history, full exposure
@@ -171,7 +173,7 @@ def get_regime_exposure(
     spy_df: pd.DataFrame,
     vix_df: Optional[pd.DataFrame],
     date: pd.Timestamp,
-    sma_period: int = 200
+    sma_period: int = None
 ) -> Tuple[float, str]:
     """
     Determine market regime and appropriate exposure level.
@@ -191,11 +193,14 @@ def get_regime_exposure(
         spy_df: DataFrame with SPY data ('date', 'close')
         vix_df: DataFrame with VIX data ('date', 'close'), optional
         date: Current date
-        sma_period: Period for trend SMA (default 200)
+        sma_period: Period for trend SMA (from REGIME_PARAMS)
 
     Returns:
         Tuple of (exposure_multiplier, regime_label)
     """
+    if sma_period is None:
+        sma_period = REGIME_PARAMS["SMA_PERIOD"]
+
     # Get SPY data up to date
     spy = spy_df[spy_df['date'] <= date].copy()
 
@@ -208,22 +213,22 @@ def get_regime_exposure(
     spy_above_trend = spy_close > spy_sma
 
     # Get VIX level
-    vix_level = 20.0  # Default to normal if no data
+    vix_level = REGIME_PARAMS["VIX_LOW"]  # Default to normal if no data
     if vix_df is not None:
         vix = vix_df[vix_df['date'] <= date]
         if len(vix) > 0:
             vix_level = vix['close'].iloc[-1]
 
     # Regime classification
-    if vix_level > 30:
+    if vix_level > REGIME_PARAMS["VIX_CRISIS"]:
         return 0.0, "crisis"
     elif not spy_above_trend:
         return 0.3, "bear_market"
-    elif vix_level < 20:
+    elif vix_level < REGIME_PARAMS["VIX_LOW"]:
         return 1.0, "bull_calm"
-    elif vix_level < 25:
+    elif vix_level < REGIME_PARAMS["VIX_MODERATE"]:
         return 0.8, "bull_moderate"
-    else:  # 25-30
+    else:  # moderate-crisis range
         return 0.6, "bull_elevated"
 
 
@@ -368,7 +373,7 @@ def calculate_volatility_weights(
     stock_data: Dict[str, pd.DataFrame],
     holdings: List[str],
     date: pd.Timestamp,
-    lookback: int = 20
+    lookback: int = None
 ) -> Dict[str, float]:
     """
     Calculate inverse-volatility position weights.
@@ -380,11 +385,14 @@ def calculate_volatility_weights(
         stock_data: Dict mapping ticker -> DataFrame
         holdings: List of tickers to weight
         date: Current date
-        lookback: Days for volatility calculation (default 20)
+        lookback: Days for volatility calculation (from VOLATILITY_PARAMS)
 
     Returns:
         Dict of ticker -> weight (sums to 1.0)
     """
+    if lookback is None:
+        lookback = VOLATILITY_PARAMS["LOOKBACK_PERIOD"]
+
     inv_vols = {}
 
     for ticker in holdings:
@@ -401,7 +409,7 @@ def calculate_volatility_weights(
 
         # Calculate realized volatility (annualized)
         daily_ret = recent['close'].pct_change().dropna()
-        realized_vol = daily_ret.std() * np.sqrt(252)
+        realized_vol = daily_ret.std() * np.sqrt(VOLATILITY_PARAMS["TRADING_DAYS_PER_YEAR"])
 
         # Floor volatility at 10% (prevent extreme weights)
         realized_vol = max(realized_vol, 0.10)

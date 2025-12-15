@@ -4,6 +4,7 @@ import { useState, useMemo } from "react";
 import { Bitcoin, Star, Loader2, TrendingUp, TrendingDown, Minus, Trash2 } from "lucide-react";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
+import { getApiUrl } from "@/config/api";
 
 function cn(...inputs: ClassValue[]) {
     return twMerge(clsx(inputs));
@@ -30,8 +31,6 @@ interface AssetTableProps {
     onToggleFavorite?: (ticker: string, isFavorite: boolean) => void;
     refreshingTicker?: string | null;
 }
-
-const API_BASE = "http://localhost:8000";
 
 export default function AssetTable({ assets, onSelect, onDelete, onRefresh, onToggleFavorite, refreshingTicker }: AssetTableProps) {
     const [togglingFavorite, setTogglingFavorite] = useState<string | null>(null);

@@ -3,8 +3,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { Brain, TrendingUp, TrendingDown, AlertTriangle, RefreshCw, X, Activity, ShieldAlert, Zap } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, ReferenceLine, Legend } from "recharts";
-
-const API_BASE = "http://localhost:8000";
+import { getApiUrl } from "@/config/api";
 
 interface AssetHistory {
     date: string;
@@ -35,7 +34,7 @@ export default function AIPredictionPanel({ isOpen, onClose }: AIPredictionPanel
     // Fetch tickers
     useEffect(() => {
         if (isOpen) {
-            fetch(`${API_BASE}/dashboard`)
+            fetch(getApiUrl('/dashboard'))
                 .then((res) => res.json())
                 .then((data) => {
                     const list = data.map((d: any) => d.ticker);
@@ -47,7 +46,7 @@ export default function AIPredictionPanel({ isOpen, onClose }: AIPredictionPanel
                 .catch(console.error);
 
             // Fetch active model
-            fetch(`${API_BASE}/status/ai`)
+            fetch(getApiUrl('/status/ai'))
                 .then((res) => res.json())
                 .then((data) => setModelVersion(data.model_version || "V9 Ranker"))
                 .catch(() => setModelVersion("V9 Ranker"));
@@ -63,7 +62,7 @@ export default function AIPredictionPanel({ isOpen, onClose }: AIPredictionPanel
             setError(null);
             try {
                 // Use the dashboard detail endpoint which now supports V9 Rank
-                const res = await fetch(`${API_BASE}/dashboard/${selectedTicker}`);
+                const res = await fetch(getApiUrl(`/dashboard/${selectedTicker}`));
                 if (!res.ok) throw new Error("Failed to fetch data");
                 const data = await res.json();
                 setDetailData(data);

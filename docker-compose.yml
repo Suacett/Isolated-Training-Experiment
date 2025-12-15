@@ -20,7 +20,7 @@ services:
     privileged: true # Required for GPU access in LXC containers
     restart: always
     dns:
-      - 9.9.9.9
+      - 8.8.8.8
       - 8.8.4.4
       - 1.1.1.1
 

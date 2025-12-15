@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { TrendingUp, AlertCircle, RefreshCw } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 import { useToast } from "./Toast";
+import { getApiUrl } from "@/config/api";
 
 interface Portfolio {
   session_id: string;
@@ -56,7 +57,7 @@ export default function PortfolioComparison() {
     const fetchData = async () => {
       try {
         setLoading(true);
-        const response = await fetch("http://localhost:8000/portfolio/comparison");
+        const response = await fetch(getApiUrl("/portfolio/comparison"));
 
         if (!response.ok) {
           if (response.status === 404) {

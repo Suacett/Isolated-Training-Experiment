@@ -41,8 +41,9 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 # Local application imports - Services
-from services.lstm_model import LSTMModel, get_device
+from services.lstm_model import LSTMModel
 from services.transformer_model import TransformerRankModel
+from services.device_utils import get_device
 from services.db import (
     StockPrice, 
     init_db, 
@@ -66,8 +67,16 @@ from services.model_metadata import get_available_models, get_model_info, MODEL_
 from services.model_loader import model_loader
 
 # Local application imports - Configuration and State
+from config.constants import (
+    DEFAULT_TICKERS, SIGNAL_THRESHOLDS, MODEL_DIMENSIONS, PAPER_TRADING_SCHEDULE
+)
+from config.settings import MODELS_DIR_PATH
+from exceptions import (
+    ModelLoadError, PredictionError, FeatureDimensionMismatchError,
+    DataIngestionError, ScalerMissingError
+)
 from utils.config_loader import (
-    settings, save_config, clear_config, 
+    settings, save_config, clear_config,
     is_alpha_vantage_configured, get_playground_enabled, set_playground_enabled
 )
 from state import state
@@ -123,7 +132,7 @@ app.include_router(portfolio_comparison.router)
 
 # Model and scaler paths
 # We will dynamically select the best available model
-MODELS_DIR = Path(__file__).parent / "models"
+MODELS_DIR = MODELS_DIR_PATH
 MODEL_VERSIONS = ["v9", "v7", "v6", "v5", "v4", "v3", "v2"]
 
 # Default to v2 if nothing else found
@@ -222,6 +231,10 @@ async def startup_event():
                 state.lstm_model = LSTMModel.load(str(MODEL_WEIGHTS_PATH), device=state.device)
                 logger.info(f"✅ Successfully loaded trained model from {MODEL_WEIGHTS_PATH}")
                 logger.info(f"   Model config: input_dim={state.lstm_model.input_dim}, window_size={state.lstm_model.window_size}")
+        except FileNotFoundError as e:
+            logger.error(f"❌ Model checkpoint file not found: {e}")
+            logger.warning("⚠️ Creating new untrained model")
+            state.lstm_model = LSTMModel(input_dim=37, window_size=60, device=state.device)
         except Exception as e:
             logger.error(f"❌ Failed to load model weights: {e}. Creating new model.")
             state.lstm_model = LSTMModel(input_dim=37, window_size=60, device=state.device)
@@ -252,7 +265,6 @@ async def startup_event():
         state.alpha_vantage_enabled = False
 
     # Auto-seed watchlist with default assets if empty
-    DEFAULT_TICKERS = ["SPY", "BTC-USD", "AAPL", "AMD", "TSLA", "AMZN"]
     try:
         watchlist = await get_watchlist()
         if len(watchlist) == 0:
@@ -278,11 +290,16 @@ async def startup_event():
     except Exception as e:
         logger.warning(f"⚠️ Failed to check/seed watchlist: {e}")
 
-    # Schedule daily paper trading (4:30 PM EST, weekdays only)
+    # Schedule daily paper trading (from PAPER_TRADING_SCHEDULE config)
     try:
         scheduler.add_job(
             run_daily_paper_trading,
-            CronTrigger(hour=16, minute=30, day_of_week="mon-fri", timezone="America/New_York"),
+            CronTrigger(
+                hour=PAPER_TRADING_SCHEDULE["HOUR"],
+                minute=PAPER_TRADING_SCHEDULE["MINUTE"],
+                day_of_week=PAPER_TRADING_SCHEDULE["DAY_OF_WEEK"],
+                timezone=PAPER_TRADING_SCHEDULE["TIMEZONE"]
+            ),
             id="daily_paper_trading",
             name="V9 Paper Trading Daily Run"
         )
@@ -563,32 +580,38 @@ async def get_dashboard_summary():
                                 # V9 Signal Logic
                                 if rank_score >= 0.8: signal = "STRONG BUY"
                                 elif rank_score >= 0.6: signal = "BUY"
-                                elif rank_score <= 0.2: signal = "SELL"
+                                elif rank_score <= SIGNAL_THRESHOLDS["SELL_RANK_THRESHOLD"]: signal = "SELL"
                                 else: signal = "HOLD"
                              else:
                                 # Legacy LSTM Logic
-                                seq_data = processed_df.iloc[-60:][feature_cols].values 
+                                seq_data = processed_df.iloc[-60:][feature_cols].values
                                 scaled_seq = state.scaler.transform(seq_data)
                                 input_tensor = torch.tensor(scaled_seq, dtype=torch.float32).unsqueeze(0)
                                 log_return = state.lstm_model.predict(input_tensor, state.device)
                                 prediction = current_price * np.exp(log_return)
-                                
-                                is_bullish_prediction = prediction > current_price * 1.02
+
+                                is_bullish_prediction = prediction > current_price * SIGNAL_THRESHOLDS["BUY_MULTIPLIER"]
                                 is_undervalued = intrinsic_value > 0 and current_price < intrinsic_value
-                                is_deep_value = intrinsic_value > 0 and current_price < 0.5 * intrinsic_value
-                                
+                                is_deep_value = intrinsic_value > 0 and current_price < SIGNAL_THRESHOLDS["DEEP_VALUE_MULTIPLIER"] * intrinsic_value
+
                                 if is_bullish_prediction and is_undervalued:
                                     signal = "STRONG BUY"
                                 elif is_bullish_prediction:
                                     signal = "BUY"
                                 elif is_deep_value:
                                     signal = "VALUE BUY"
-                                elif prediction < current_price * 0.98:
+                                elif prediction < current_price * SIGNAL_THRESHOLDS["SELL_MULTIPLIER"]:
                                     signal = "SELL"
                                 else:
                                     signal = "HOLD"
+            except KeyError as e:
+                logger.error(f"Feature column missing for {ticker}: {e}")
+                signal = "ERROR"
+            except ValueError as e:
+                logger.error(f"Invalid data for {ticker}: {e}")
+                signal = "ERROR"
             except Exception as e:
-                logger.error(f"Prediction error for {ticker}: {e}")
+                logger.error(f"Unexpected prediction error for {ticker}: {e}")
                 signal = "ERROR"
             
         summaries.append({

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { X, Terminal } from "lucide-react";
+import { getApiUrl } from "@/config/api";
 
 interface LogViewerProps {
     onClose: () => void;
@@ -14,7 +15,7 @@ export default function LogViewer({ onClose }: LogViewerProps) {
     useEffect(() => {
         const fetchLogs = async () => {
             try {
-                const res = await fetch("http://localhost:8000/logs");
+                const res = await fetch(getApiUrl("/logs"));
                 if (res.ok) {
                     const data = await res.json();
                     setLogs(data.logs || []);

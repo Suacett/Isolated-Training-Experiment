@@ -4,14 +4,12 @@ from sqlalchemy.orm import sessionmaker, declarative_base
 from sqlalchemy import Column, String, Float, DateTime, select, desc, Integer, delete, Boolean
 from sqlalchemy.dialects.postgresql import insert
 from datetime import datetime
-
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:password@timescaledb:5432/stock_db")
+from config.settings import DATABASE_URL, PAPER_SESSION_ID
+from config.constants import INITIAL_PORTFOLIO_CASH, DEFAULT_REBALANCE_DAYS
 
 engine = create_async_engine(DATABASE_URL, echo=False)
 AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 Base = declarative_base()
-
-PAPER_SESSION_ID = "v9_golden_2025"
 
 
 class StockPrice(Base):
@@ -83,10 +81,10 @@ class PaperPortfolio(Base):
     
     id = Column(Integer, primary_key=True, autoincrement=True)
     session_id = Column(String, unique=True, nullable=False)
-    cash_balance = Column(Float, default=10000.0)
+    cash_balance = Column(Float, default=INITIAL_PORTFOLIO_CASH)
     equity_value = Column(Float, default=0.0)
-    total_value = Column(Float, default=10000.0)
-    days_since_rebalance = Column(Integer, default=5)
+    total_value = Column(Float, default=INITIAL_PORTFOLIO_CASH)
+    days_since_rebalance = Column(Integer, default=DEFAULT_REBALANCE_DAYS)
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 

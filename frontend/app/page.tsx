@@ -7,12 +7,11 @@ import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 import Link from "next/link";
 import SmartTooltip from "./components/SmartTooltip";
+import { getApiUrl } from "@/config/api";
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
-
-const API_BASE = "http://localhost:8000";
 
 // --- Types ---
 
@@ -79,7 +78,7 @@ export default function Home() {
     const fetchData = async () => {
       try {
         // 1. Fetch Status (Summary, Holdings)
-        const statusRes = await fetch(`${API_BASE}/paper/status`);
+        const statusRes = await fetch(getApiUrl('/paper/status'));
         if (!statusRes.ok) throw new Error("Failed to fetch status");
         const statusData = await statusRes.json();
 
@@ -95,7 +94,7 @@ export default function Home() {
         setHoldings(statusData.holdings);
 
         // 2. Fetch ALL Trades (up to 500 - covers 5 years of weekly rebalancing)
-        const tradesRes = await fetch(`${API_BASE}/paper/trades?limit=500`);
+        const tradesRes = await fetch(getApiUrl('/paper/trades?limit=500'));
         if (tradesRes.ok) {
           const tradesData = await tradesRes.json();
           setTrades(tradesData.trades || []);
@@ -105,7 +104,7 @@ export default function Home() {
         }
 
         // 3. Fetch History (Chart)
-        const histRes = await fetch(`${API_BASE}/paper/history`);
+        const histRes = await fetch(getApiUrl('/paper/history'));
         if (histRes.ok) {
           const histData = await histRes.json();
           setEquityHistory(histData);

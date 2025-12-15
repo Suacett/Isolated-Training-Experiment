@@ -9,9 +9,7 @@ import BrowseStocksModal from "../components/BrowseStocksModal";
 import { useToast } from "../components/Toast";
 import AIPredictionPanel from "../components/AIPredictionPanel";
 import { Grid, Star, ScanSearch } from "lucide-react";
-
-// NOTE: Navbar already includes API_BASE, but we define it here for local fetches
-const API_BASE = "http://localhost:8000";
+import { getApiUrl } from "@/config/api";
 
 // API response types
 interface DashboardItem {
@@ -58,7 +56,7 @@ export default function ScannerPage() {
 
         setIsLoading(true);
         try {
-            const res = await fetch(`${API_BASE}/dashboard`);
+            const res = await fetch(getApiUrl('/dashboard'));
             if (!res.ok) throw new Error("Failed to fetch dashboard");
             const data: DashboardItem[] = await res.json();
 
@@ -104,7 +102,7 @@ export default function ScannerPage() {
     const handleAddAsset = async (ticker: string, isFavorite: boolean = true) => {
         showToast(`Adding ${ticker.toUpperCase()} to watchlist...`, "info");
         try {
-            const watchlistRes = await fetch(`${API_BASE}/stocks/`, {
+            const watchlistRes = await fetch(getApiUrl('/stocks/'), {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ ticker, is_favorite: isFavorite }),
@@ -128,7 +126,7 @@ export default function ScannerPage() {
     // Toggle favorite
     const handleToggleFavorite = async (ticker: string, isFavorite: boolean) => {
         try {
-            const res = await fetch(`${API_BASE}/stocks/${ticker}/favorite`, {
+            const res = await fetch(getApiUrl(`/stocks/${ticker}/favorite`), {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ is_favorite: isFavorite }),
@@ -159,7 +157,7 @@ export default function ScannerPage() {
         if (!deleteTicker) return;
 
         try {
-            const res = await fetch(`${API_BASE}/stocks/${deleteTicker}?cascade=${cascade}`, {
+            const res = await fetch(getApiUrl(`/stocks/${deleteTicker}?cascade=${cascade}`), {
                 method: "DELETE"
             });
 
@@ -179,7 +177,7 @@ export default function ScannerPage() {
         setRefreshingTicker(ticker);
         showToast(`Refreshing ${ticker} (${mode} sync)...`, "info");
         try {
-            const res = await fetch(`${API_BASE}/ingest/${ticker}?mode=${mode}`, { method: "POST" });
+            const res = await fetch(getApiUrl(`/ingest/${ticker}?mode=${mode}`), { method: "POST" });
             if (!res.ok) throw new Error("Refresh failed");
             showToast(`${ticker} data updated successfully`, "success");
             await fetchDashboard();
