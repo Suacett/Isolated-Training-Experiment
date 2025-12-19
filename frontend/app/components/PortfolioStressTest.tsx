@@ -26,6 +26,7 @@ import {
     X,
     Info,
 } from "lucide-react";
+import { useMounted } from "../hooks/useMounted";
 import SmartTooltip from "./SmartTooltip";
 import {
     LineChart,
@@ -141,6 +142,7 @@ export default function PortfolioComparison({ onBack }: PortfolioComparisonProps
     const [rerunLogs, setRerunLogs] = useState<string[]>([]);
     const [crashSectionOpen, setCrashSectionOpen] = useState(false);
     const [fetchError, setFetchError] = useState<string | null>(null);
+    const mounted = useMounted();
 
     // Request tracking
     const abortControllerRef = useRef<AbortController | null>(null);
@@ -297,6 +299,8 @@ export default function PortfolioComparison({ onBack }: PortfolioComparisonProps
     };
 
     const getConfigIcon = (sessionId: string) => {
+        if (!mounted) return <div className="w-[18px] h-[18px]" />;
+
         if (sessionId.includes("ultimate")) return <BarChart3 className="text-teal-400" size={18} />;
         if (sessionId.includes("aggressive")) return <Flame className="text-orange-400" size={18} />;
         if (sessionId.includes("conservative")) return <Shield className="text-blue-400" size={18} />;
@@ -411,7 +415,7 @@ export default function PortfolioComparison({ onBack }: PortfolioComparisonProps
                             </button>
                             <div>
                                 <h1 className="text-xl font-bold text-white flex items-center gap-2">
-                                    <BarChart3 className="text-amber-400" size={24} />
+                                    {mounted ? <BarChart3 className="text-amber-400" size={24} /> : <div className="w-6 h-6" />}
                                     V9 Portfolio Laboratory
                                 </h1>
                                 <p className="text-xs text-zinc-500">Compare how V9 behaves with different settings and during market crises</p>

@@ -2,6 +2,7 @@
 
 import { useState, useMemo } from "react";
 import { Bitcoin, Star, Loader2, TrendingUp, TrendingDown, Minus, Trash2 } from "lucide-react";
+import { useMounted } from "../hooks/useMounted";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 
@@ -33,6 +34,7 @@ interface AssetTableProps {
 
 export default function AssetTable({ assets, onSelect, onDelete, onRefresh, onToggleFavorite, refreshingTicker }: AssetTableProps) {
     const [togglingFavorite, setTogglingFavorite] = useState<string | null>(null);
+    const mounted = useMounted();
 
     // Sort assets by Rank (Descending) by default
     const sortedAssets = useMemo(() => {
@@ -64,7 +66,7 @@ export default function AssetTable({ assets, onSelect, onDelete, onRefresh, onTo
     };
 
     const getSignalBadge = (signal?: string) => {
-        if (!signal) return null;
+        if (!signal || !mounted) return null;
         const s = signal.toUpperCase();
         if (s.includes("BUY")) return <span className="flex items-center gap-1"><TrendingUp size={14} /> {s}</span>;
         if (s.includes("SELL")) return <span className="flex items-center gap-1"><TrendingDown size={14} /> {s}</span>;
@@ -104,16 +106,16 @@ export default function AssetTable({ assets, onSelect, onDelete, onRefresh, onTo
                                             : "text-zinc-700 hover:text-zinc-400"
                                     )}
                                 >
-                                    {togglingFavorite === asset.ticker ? (
+                                    {mounted && (togglingFavorite === asset.ticker ? (
                                         <Loader2 size={16} className="animate-spin" />
                                     ) : (
                                         <Star size={16} fill={asset.isFavorite !== false ? "currentColor" : "none"} />
-                                    )}
+                                    ))}
                                 </button>
                             </td>
                             <td className="px-4 py-4 font-medium text-zinc-200">
                                 <div className="flex items-center gap-2">
-                                    {asset.isCrypto && <Bitcoin size={16} className="text-[#F7931A]" />}
+                                    {mounted && asset.isCrypto && <Bitcoin size={16} className="text-[#F7931A]" />}
                                     <span className="font-display tracking-tight text-base">{asset.ticker}</span>
                                 </div>
                             </td>
@@ -188,7 +190,7 @@ export default function AssetTable({ assets, onSelect, onDelete, onRefresh, onTo
                                         className="p-2 text-zinc-600 hover:text-rose-500 hover:bg-rose-500/10 rounded-full transition-colors opacity-0 group-hover:opacity-100"
                                         title="Remove from Watchlist"
                                     >
-                                        <Trash2 size={16} />
+                                        {mounted && <Trash2 size={16} />}
                                     </button>
                                 </div>
                             </td>

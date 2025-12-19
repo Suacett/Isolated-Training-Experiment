@@ -8,6 +8,7 @@ import { twMerge } from "tailwind-merge";
 import Link from "next/link";
 import SmartTooltip from "./components/SmartTooltip";
 import { getApiUrl } from "@/config/api";
+import { useMounted } from "./hooks/useMounted";
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -76,6 +77,7 @@ export default function Home() {
   const [equityHistory, setEquityHistory] = useState<EquityPoint[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const mounted = useMounted();
 
   useEffect(() => {
     const fetchData = async () => {
@@ -182,7 +184,7 @@ export default function Home() {
           {/* Equity Curve */}
           <div className="lg:col-span-2 p-6 rounded-2xl bg-[#12121A] border border-white/[0.08] relative overflow-hidden group">
             <div className="absolute top-0 right-0 p-6 opacity-5 group-hover:opacity-10 transition-opacity">
-              <TrendingUp size={100} />
+              {mounted && <TrendingUp size={100} />}
             </div>
 
             <div className="relative z-10 flex flex-col h-[380px]">
@@ -280,7 +282,7 @@ export default function Home() {
             {/* Daily PnL */}
             <div className="p-5 rounded-xl bg-[#12121A] border border-white/[0.08] flex flex-col justify-center h-[calc(33%-11px)]">
               <div className="flex items-center gap-2 mb-2">
-                <DollarSign size={16} className="text-emerald-500" />
+                {mounted ? <DollarSign size={16} className="text-emerald-500" /> : <div className="w-4 h-4" />}
                 <span className="text-zinc-500 text-xs uppercase tracking-wider font-medium">Total PnL</span>
                 <SmartTooltip
                   term="Total Profit & Loss"
@@ -298,7 +300,7 @@ export default function Home() {
             {/* Sharpe Ratio */}
             <div className="p-5 rounded-xl bg-[#12121A] border border-white/[0.08] flex flex-col justify-center h-[calc(33%-11px)]">
               <div className="flex items-center gap-2 mb-2">
-                <Unlock size={16} className="text-amber-500" />
+                {mounted ? <Unlock size={16} className="text-amber-500" /> : <div className="w-4 h-4" />}
                 <span className="text-zinc-500 text-xs uppercase tracking-wider font-medium">Sharpe Ratio (1y)</span>
                 <SmartTooltip
                   term="Sharpe Ratio"
@@ -317,7 +319,7 @@ export default function Home() {
             {/* Alpha */}
             <div className="p-5 rounded-xl bg-[#12121A] border border-white/[0.08] flex flex-col justify-center h-[calc(33%-11px)]">
               <div className="flex items-center gap-2 mb-2">
-                <Percent size={16} className="text-indigo-500" />
+                {mounted ? <Percent size={16} className="text-indigo-500" /> : <div className="w-4 h-4" />}
                 <span className="text-zinc-500 text-xs uppercase tracking-wider font-medium">Alpha</span>
                 <SmartTooltip
                   term="Alpha (α)"
@@ -346,7 +348,7 @@ export default function Home() {
                 "py-4 text-sm font-medium border-b-2 transition-colors flex items-center gap-2",
                 activeTab === "holdings" ? "border-amber-500 text-white" : "border-transparent text-zinc-500 hover:text-zinc-300"
               )}>
-              <Wallet size={16} />
+              {mounted ? <Wallet size={16} /> : <div className="w-4 h-4" />}
               Current Holdings
             </button>
             <button
@@ -355,7 +357,7 @@ export default function Home() {
                 "py-4 text-sm font-medium border-b-2 transition-colors flex items-center gap-2",
                 activeTab === "logs" ? "border-amber-500 text-white" : "border-transparent text-zinc-500 hover:text-zinc-300"
               )}>
-              <FileText size={16} />
+              {mounted ? <FileText size={16} /> : <div className="w-4 h-4" />}
               Trade Logs
             </button>
 

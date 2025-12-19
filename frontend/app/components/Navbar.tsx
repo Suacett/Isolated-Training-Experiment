@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Terminal, Brain, FlaskConical, ScrollText, Settings, LayoutDashboard, ScanSearch, BarChart3 } from "lucide-react";
+import { useMounted } from "../hooks/useMounted";
 import SetupModal from "./SetupModal";
 import LogViewer from "./LogViewer";
 import { getApiUrl } from "@/config/api";
@@ -15,6 +16,7 @@ export default function Navbar() {
     const [equity, setEquity] = useState<number | null>(null);
     const [isSetupOpen, setIsSetupOpen] = useState(false);
     const [isLogsOpen, setIsLogsOpen] = useState(false);
+    const mounted = useMounted();
 
     useEffect(() => {
         const controller = new AbortController();
@@ -71,19 +73,19 @@ export default function Navbar() {
                         {/* Main Nav */}
                         <nav className="flex items-center gap-1">
                             <Link href="/" className={navClass("/")}>
-                                <LayoutDashboard size={18} />
+                                {mounted ? <LayoutDashboard size={18} /> : <div className="w-[18px] h-[18px]" />}
                                 <span className="text-sm font-medium">Dashboard</span>
                             </Link>
                             <Link href="/scanner" className={navClass("/scanner")}>
-                                <ScanSearch size={18} />
+                                {mounted ? <ScanSearch size={18} /> : <div className="w-[18px] h-[18px]" />}
                                 <span className="text-sm font-medium">Scanner</span>
                             </Link>
                             <Link href="/playground" className={navClass("/playground")}>
-                                <FlaskConical size={18} />
+                                {mounted ? <FlaskConical size={18} /> : <div className="w-[18px] h-[18px]" />}
                                 <span className="text-sm font-medium">Playground</span>
                             </Link>
                             <Link href="/stress-test" className={navClass("/stress-test")}>
-                                <BarChart3 size={18} />
+                                {mounted ? <BarChart3 size={18} /> : <div className="w-[18px] h-[18px]" />}
                                 <span className="text-sm font-medium">Laboratory</span>
                             </Link>
                         </nav>
@@ -103,7 +105,7 @@ export default function Navbar() {
                         )}
 
                         {/* Status Badge */}
-                        {status && (
+                        {mounted && status && (
                             <div className="px-3 py-1 rounded-full bg-white/5 border border-white/10 flex items-center gap-2 text-xs">
                                 <span className={`w-1.5 h-1.5 rounded-full ${status.model_loaded ? "bg-emerald-500" : "bg-amber-500"}`} />
                                 <span className="text-zinc-400">{status.model_loaded ? "V9 Active" : "No Model"}</span>
@@ -127,7 +129,7 @@ export default function Navbar() {
                             title="Settings"
                             onClick={() => setIsSetupOpen(true)}
                         >
-                            <Settings size={18} />
+                            {mounted && <Settings size={18} />}
                         </button>
 
                         <div className="ml-2 px-2 py-0.5 rounded bg-[#1A1A24] border border-white/10 font-mono text-[10px] text-zinc-500">

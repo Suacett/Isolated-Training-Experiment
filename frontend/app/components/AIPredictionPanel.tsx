@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { Brain, TrendingUp, TrendingDown, AlertTriangle, RefreshCw, X, Activity, ShieldAlert, Zap } from "lucide-react";
+import { useMounted } from "../hooks/useMounted";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, ReferenceLine, Legend } from "recharts";
 import { getApiUrl } from "@/config/api";
 
@@ -30,6 +31,7 @@ export default function AIPredictionPanel({ isOpen, onClose, initialTicker }: AI
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [modelVersion, setModelVersion] = useState<string>("Unknown");
+    const mounted = useMounted();
 
     // Fetch tickers
     useEffect(() => {
@@ -186,7 +188,7 @@ export default function AIPredictionPanel({ isOpen, onClose, initialTicker }: AI
                 <div className="px-6 py-4 border-b border-white/[0.08] bg-[#12121A] flex items-center justify-between">
                     <div className="flex items-center gap-4">
                         <div className="h-10 w-10 rounded-lg bg-indigo-500/10 flex items-center justify-center border border-indigo-500/20">
-                            <Brain className="text-indigo-400" size={20} />
+                            {mounted && <Brain className="text-indigo-400" size={20} />}
                         </div>
                         <div>
                             <h2 className="text-lg font-display font-medium text-white">Security Analysis</h2>
@@ -209,7 +211,7 @@ export default function AIPredictionPanel({ isOpen, onClose, initialTicker }: AI
                             {tickers.map(t => <option key={t} value={t}>{t}</option>)}
                         </select>
                         <button onClick={onClose} className="p-2 hover:bg-white/[0.05] rounded-lg transition-colors text-zinc-400 hover:text-white">
-                            <X size={20} />
+                            {mounted && <X size={20} />}
                         </button>
                     </div>
                 </div>
@@ -217,11 +219,11 @@ export default function AIPredictionPanel({ isOpen, onClose, initialTicker }: AI
                 <div className="flex-1 overflow-y-auto p-6">
                     {isLoading ? (
                         <div className="h-full flex items-center justify-center">
-                            <RefreshCw className="animate-spin text-zinc-600" size={32} />
+                            {mounted && <RefreshCw className="animate-spin text-zinc-600" size={32} />}
                         </div>
                     ) : error ? (
                         <div className="h-full flex items-center justify-center text-rose-400">
-                            <ShieldAlert className="mr-2" /> {error}
+                            {mounted && <ShieldAlert className="mr-2" />} {error}
                         </div>
                     ) : (
                         <div className="space-y-6">
@@ -231,7 +233,7 @@ export default function AIPredictionPanel({ isOpen, onClose, initialTicker }: AI
                                 {/* Rank Widget */}
                                 <div className="p-5 rounded-xl bg-gradient-to-br from-indigo-900/10 to-purple-900/10 border border-white/[0.08] relative overflow-hidden group">
                                     <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
-                                        <Activity size={80} />
+                                        {mounted && <Activity size={80} />}
                                     </div>
                                     <h3 className="text-zinc-500 text-xs font-medium uppercase tracking-wider mb-1">V9 Relative Rank</h3>
                                     <div className="flex items-baseline gap-2">
@@ -251,7 +253,7 @@ export default function AIPredictionPanel({ isOpen, onClose, initialTicker }: AI
                                 <div className="p-5 rounded-xl bg-[#0A0A0F]/50 border border-white/[0.08]">
                                     <div className="flex justify-between items-start mb-2">
                                         <h3 className="text-zinc-500 text-xs font-medium uppercase tracking-wider">Dynamic ATR Stop</h3>
-                                        <ShieldAlert size={16} className="text-zinc-600" />
+                                        {mounted && <ShieldAlert size={16} className="text-zinc-600" />}
                                     </div>
                                     <div className="text-2xl font-mono text-zinc-200">
                                         ${metrics?.atrStop != null ? metrics.atrStop.toFixed(2) : "—"}
@@ -265,7 +267,7 @@ export default function AIPredictionPanel({ isOpen, onClose, initialTicker }: AI
                                 <div className="p-5 rounded-xl bg-[#0A0A0F]/50 border border-white/[0.08]">
                                     <div className="flex justify-between items-start mb-2">
                                         <h3 className="text-zinc-500 text-xs font-medium uppercase tracking-wider">SPY Correlation</h3>
-                                        <Zap size={16} className="text-zinc-600" />
+                                        {mounted && <Zap size={16} className="text-zinc-600" />}
                                     </div>
                                     <div className="text-2xl font-mono text-zinc-200">
                                         {metrics?.correlation != null ? metrics.correlation.toFixed(2) : "—"}

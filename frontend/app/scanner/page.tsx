@@ -9,6 +9,7 @@ import BrowseStocksModal from "../components/BrowseStocksModal";
 import { useToast } from "../components/Toast";
 import AIPredictionPanel from "../components/AIPredictionPanel";
 import { Grid, Star, ScanSearch } from "lucide-react";
+import { useMounted } from "../hooks/useMounted";
 import { getApiUrl } from "@/config/api";
 
 // API response types
@@ -41,6 +42,7 @@ export default function ScannerPage() {
 
     // AI Prediction Panel
     const [isAIPanelOpen, setIsAIPanelOpen] = useState(false);
+    const mounted = useMounted();
 
     // Prevent concurrent fetches and duplicate initial fetch
     const isLoadingRef = useRef(false);
@@ -203,10 +205,10 @@ export default function ScannerPage() {
                 <div className="flex items-center justify-between">
                     <div>
                         <h2 className="text-2xl font-semibold text-white flex items-center gap-3">
-                            <ScanSearch size={28} className="text-amber-500" />
+                            {mounted ? <ScanSearch size={28} className="text-amber-500" /> : <div className="w-7 h-7" />}
                             V9 Market Scanner
                             <span className="text-xs px-2 py-1 bg-amber-500/20 text-amber-400 rounded-full border border-amber-500/30 flex items-center gap-1">
-                                <Star size={12} fill="currentColor" />
+                                {mounted ? <Star size={12} fill="currentColor" /> : <div className="w-3 h-3" />}
                                 {assets.filter(a => a.isFavorite !== false).length} Favorites
                             </span>
                         </h2>
@@ -220,7 +222,7 @@ export default function ScannerPage() {
                             className="p-2 rounded-lg bg-zinc-800 border border-zinc-700 hover:bg-zinc-700 hover:border-zinc-600 transition-colors text-zinc-400 hover:text-white"
                             title="Browse Stocks"
                         >
-                            <Grid size={18} />
+                            {mounted && <Grid size={18} />}
                         </button>
                         <AddAssetBar onAdd={(ticker) => handleAddAsset(ticker, false)} />
                     </div>

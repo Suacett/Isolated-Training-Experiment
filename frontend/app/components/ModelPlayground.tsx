@@ -14,6 +14,7 @@ import {
     ChevronUp,
     ChevronDown,
 } from "lucide-react";
+import { useMounted } from "../hooks/useMounted";
 import SmartTooltip from "./SmartTooltip";
 import { getApiUrl } from "@/config/api";
 import {
@@ -44,6 +45,7 @@ export default function ModelPlayground({ onBack }: PlaygroundPageProps) {
     const [error, setError] = useState<string | null>(null);
     const [accuracyDays, setAccuracyDays] = useState(10);
     const [explanationLoading, setExplanationLoading] = useState(false);
+    const mounted = useMounted();
 
     // Helper function for strength indicator color
     const getStrengthColor = (strength: number | undefined) => {
@@ -209,7 +211,7 @@ export default function ModelPlayground({ onBack }: PlaygroundPageProps) {
                     <div>
                         {/* Empty left side or breadcrumbs if needed */}
                         <div className="flex items-center gap-2 text-zinc-400">
-                            <Brain className="text-amber-400" size={20} />
+                            {mounted && <Brain className="text-amber-400" size={20} />}
                             <span className="font-medium text-white">Model Sandbox</span>
                         </div>
                     </div>
@@ -239,7 +241,7 @@ export default function ModelPlayground({ onBack }: PlaygroundPageProps) {
                                 disabled={isLoading}
                                 className="p-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 transition-colors text-zinc-400 hover:text-white"
                             >
-                                <RefreshCw size={18} className={isLoading ? "animate-spin" : ""} />
+                                {mounted && <RefreshCw size={18} className={isLoading ? "animate-spin" : ""} />}
                             </button>
                         )}
 
@@ -252,11 +254,11 @@ export default function ModelPlayground({ onBack }: PlaygroundPageProps) {
                                 : "bg-zinc-800 hover:bg-zinc-700 text-zinc-300"
                                 }`}
                         >
-                            {isToggling ? (
+                            {mounted && (isToggling ? (
                                 <RefreshCw size={16} className="animate-spin" />
                             ) : (
                                 <Zap size={16} />
-                            )}
+                            ))}
                             {isEnabled ? "Enabled" : "Disabled"}
                         </button>
                     </div>
@@ -285,7 +287,7 @@ export default function ModelPlayground({ onBack }: PlaygroundPageProps) {
                         </span>
                         {loaderStatus.gpu_available && (
                             <span className="text-zinc-500 flex items-center gap-1">
-                                <Cpu size={12} className="text-blue-400" />
+                                {mounted ? <Cpu size={12} className="text-blue-400" /> : <div className="w-3 h-3" />}
                                 GPU Free: <strong className="text-blue-400">{loaderStatus.gpu_memory_free_gb}GB</strong>
                             </span>
                         )}
@@ -311,7 +313,7 @@ export default function ModelPlayground({ onBack }: PlaygroundPageProps) {
                 <div className="bg-[#12121A] border-b border-white/[0.08] px-6 py-6">
                     <div className="max-w-7xl mx-auto flex items-start gap-6">
                         <div className="p-3 rounded-xl bg-indigo-500/10 border border-indigo-500/20">
-                            <Brain size={32} className="text-indigo-400" />
+                            {mounted && <Brain size={32} className="text-indigo-400" />}
                         </div>
                         <div className="space-y-2 max-w-2xl">
                             {/* Dynamic Title based on Active Model Version in Comparison */}
@@ -566,7 +568,7 @@ export default function ModelPlayground({ onBack }: PlaygroundPageProps) {
                                     onClick={() => setExpandedModel(expandedModel === model.version ? null : model.version)}
                                     className="text-xs text-purple-400 hover:text-purple-300 flex items-center gap-1"
                                 >
-                                    {expandedModel === model.version ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                                    {mounted && (expandedModel === model.version ? <ChevronUp size={14} /> : <ChevronDown size={14} />)}
                                     Why this model?
                                 </button>
 
@@ -713,7 +715,7 @@ export default function ModelPlayground({ onBack }: PlaygroundPageProps) {
                                                                         ${pred.price.toFixed(2)}
                                                                     </div>
                                                                     <div className={`text-xs flex items-center justify-center gap-1 ${isBullish ? "text-emerald-500" : "text-rose-500"}`}>
-                                                                        {isBullish ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
+                                                                        {mounted && (isBullish ? <TrendingUp size={12} /> : <TrendingDown size={12} />)}
                                                                         {isBullish ? "+" : ""}{pred.change_pct.toFixed(2)}%
                                                                     </div>
                                                                 </td>
@@ -744,11 +746,13 @@ export default function ModelPlayground({ onBack }: PlaygroundPageProps) {
                                             >
                                                 <div className="flex items-center justify-between mb-2">
                                                     <h4 className="font-bold text-white">{model.display_name}</h4>
-                                                    <Info
-                                                        size={16}
-                                                        className="text-zinc-500 cursor-pointer hover:text-indigo-400"
-                                                        onClick={() => setExpandedModel(expandedModel === model.version ? null : model.version)}
-                                                    />
+                                                    {mounted && (
+                                                        <Info
+                                                            size={16}
+                                                            className="text-zinc-500 cursor-pointer hover:text-indigo-400"
+                                                            onClick={() => setExpandedModel(expandedModel === model.version ? null : model.version)}
+                                                        />
+                                                    )}
                                                 </div>
                                                 <p className="text-xs text-zinc-300 mb-2">{model.description}</p>
                                                 <p className="text-[10px] text-zinc-500 border-t border-white/5 pt-2">{model.training_notes}</p>

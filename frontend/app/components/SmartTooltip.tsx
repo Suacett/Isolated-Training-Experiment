@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import { Info } from "lucide-react";
+import { useMounted } from "../hooks/useMounted";
 
 interface SmartTooltipProps {
     term: string;
@@ -19,6 +20,7 @@ export default function SmartTooltip({
     children
 }: SmartTooltipProps) {
     const [isVisible, setIsVisible] = useState(false);
+    const mounted = useMounted();
 
     return (
         <div
@@ -38,7 +40,7 @@ export default function SmartTooltip({
             {children || (
                 <div className="flex items-center gap-1">
                     <span className="border-b border-dotted border-zinc-500">{term}</span>
-                    <Info size={12} className="text-zinc-500" />
+                    {mounted ? <Info size={12} className="text-zinc-500" /> : <div className="w-3 h-3" />}
                 </div>
             )}
 

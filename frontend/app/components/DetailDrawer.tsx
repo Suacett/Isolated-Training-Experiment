@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useMemo } from "react";
 import { X, Loader2, CheckCircle, XCircle, BarChart3, Table as TableIcon, Eye, EyeOff, AlertTriangle } from "lucide-react";
+import { useMounted } from "../hooks/useMounted";
 import { Asset } from "./AssetTable";
 import { getApiUrl } from "@/config/api";
 import {
@@ -32,6 +33,7 @@ export default function DetailDrawer({ asset, onClose }: DetailDrawerProps) {
     const [hasIntrinsic, setHasIntrinsic] = useState(false);
     const [modelError, setModelError] = useState<string | null>(null);
     const [intrinsicBreakdown, setIntrinsicBreakdown] = useState<IntrinsicBreakdown | null>(null);
+    const mounted = useMounted();
 
     // View controls
     const [viewMode, setViewMode] = useState<"chart" | "table">("chart");
@@ -246,7 +248,7 @@ export default function DetailDrawer({ asset, onClose }: DetailDrawerProps) {
                         {['BTC', 'ETH', 'LTC', 'DOGE'].some(c => asset.ticker.includes(c)) && (
                             <div className="relative inline-block group ml-2">
                                 <div className="flex items-center gap-1 px-2 py-1 bg-amber-900/30 border border-amber-700/50 rounded text-[10px] text-amber-400 cursor-help">
-                                    <AlertTriangle size={10} />
+                                    {mounted && <AlertTriangle size={10} />}
                                     <span>Crypto Warning</span>
                                 </div>
                                 <div className="absolute left-0 top-full mt-1 w-64 bg-zinc-900 border border-zinc-700 p-2 rounded shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-[200] pointer-events-none">
@@ -262,7 +264,7 @@ export default function DetailDrawer({ asset, onClose }: DetailDrawerProps) {
                     onClick={onClose}
                     className="p-2 hover:bg-zinc-800 rounded-full text-zinc-400 hover:text-white transition-colors"
                 >
-                    <X size={20} />
+                    {mounted && <X size={20} />}
                 </button>
             </div>
 
@@ -270,7 +272,7 @@ export default function DetailDrawer({ asset, onClose }: DetailDrawerProps) {
             <div className="flex-1 p-4 overflow-hidden flex flex-col">
                 {isLoading ? (
                     <div className="flex-1 flex items-center justify-center">
-                        <Loader2 className="animate-spin text-zinc-500" size={32} />
+                        {mounted && <Loader2 className="animate-spin text-zinc-500" size={32} />}
                     </div>
                 ) : displayData.length === 0 ? (
                     <div className="flex-1 flex items-center justify-center text-zinc-500">
@@ -281,7 +283,7 @@ export default function DetailDrawer({ asset, onClose }: DetailDrawerProps) {
                         {/* Model Error State */}
                         {modelError && (
                             <div className="bg-amber-900/20 border border-amber-700/50 rounded-lg p-3 mb-4 text-amber-400 text-sm flex items-center gap-2">
-                                <AlertTriangle size={16} />
+                                {mounted && <AlertTriangle size={16} />}
                                 {modelError}
                             </div>
                         )}
@@ -290,7 +292,7 @@ export default function DetailDrawer({ asset, onClose }: DetailDrawerProps) {
                         <div className="bg-zinc-900/50 border border-zinc-800 rounded-lg p-3 mb-4 flex items-center justify-between">
                             <div className="flex items-center gap-3">
                                 <div className="p-2 bg-zinc-800 rounded-lg">
-                                    <BarChart3 size={20} className="text-zinc-400" />
+                                    {mounted && <BarChart3 size={20} className="text-zinc-400" />}
                                 </div>
                                 <div>
                                     <div className="text-sm font-medium text-white">Model Accuracy</div>
@@ -376,13 +378,13 @@ export default function DetailDrawer({ asset, onClose }: DetailDrawerProps) {
                                     onClick={() => setViewMode("chart")}
                                     className={`px-3 py-1 text-xs rounded flex items-center gap-1 ${viewMode === "chart" ? "bg-zinc-700 text-white" : "text-zinc-400"}`}
                                 >
-                                    <BarChart3 size={14} /> Chart
+                                    {mounted && <BarChart3 size={14} />} Chart
                                 </button>
                                 <button
                                     onClick={() => setViewMode("table")}
                                     className={`px-3 py-1 text-xs rounded flex items-center gap-1 ${viewMode === "table" ? "bg-zinc-700 text-white" : "text-zinc-400"}`}
                                 >
-                                    <TableIcon size={14} /> Table
+                                    {mounted && <TableIcon size={14} />} Table
                                 </button>
                             </div>
 
@@ -438,7 +440,7 @@ export default function DetailDrawer({ asset, onClose }: DetailDrawerProps) {
                                             : undefined,
                                     }}
                                 >
-                                    {visibleLines[key as keyof typeof visibleLines] ? <Eye size={12} /> : <EyeOff size={12} />}
+                                    {mounted && (visibleLines[key as keyof typeof visibleLines] ? <Eye size={12} /> : <EyeOff size={12} />)}
                                     {label}
                                 </button>
                             ))}
@@ -497,11 +499,11 @@ export default function DetailDrawer({ asset, onClose }: DetailDrawerProps) {
                                                     </td>
                                                     <td className="p-2 text-right font-mono text-zinc-400">{d.errorPct.toFixed(2)}%</td>
                                                     <td className="p-2 text-center relative group">
-                                                        {d.isCorrect ? (
+                                                        {mounted && (d.isCorrect ? (
                                                             <CheckCircle className="inline text-emerald-500" size={14} />
                                                         ) : (
                                                             <XCircle className="inline text-rose-500" size={14} />
-                                                        )}
+                                                        ))}
                                                         {/* Why Tooltip */}
                                                         <div className="absolute bottom-full right-0 mb-1 w-48 bg-zinc-900 border border-zinc-700 p-2 rounded shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-[100] pointer-events-none text-xs text-left">
                                                             <div className={`font-bold ${d.isCorrect ? 'text-emerald-400' : 'text-rose-400'}`}>
@@ -576,7 +578,7 @@ export default function DetailDrawer({ asset, onClose }: DetailDrawerProps) {
                                 onClick={() => setSelectedPrediction(null)}
                                 className="text-zinc-500 hover:text-white transition-colors"
                             >
-                                <X size={20} />
+                                {mounted && <X size={20} />}
                             </button>
                         </div>
 
@@ -617,7 +619,7 @@ export default function DetailDrawer({ asset, onClose }: DetailDrawerProps) {
                                 ? "bg-emerald-500/20 text-emerald-400"
                                 : "bg-rose-500/20 text-rose-400"
                                 }`}>
-                                {selectedPrediction.isCorrect ? <CheckCircle size={20} /> : <XCircle size={20} />}
+                                {mounted && (selectedPrediction.isCorrect ? <CheckCircle size={20} /> : <XCircle size={20} />)}
                                 {selectedPrediction.isCorrect ? "CORRECT DIRECTION" : "WRONG DIRECTION"}
                             </div>
                         </div>
