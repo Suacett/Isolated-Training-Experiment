@@ -8,7 +8,7 @@
 # predictor inside it automatically.
 #
 # Usage (run on Proxmox host):
-#   bash -c "$(wget -qO- https://raw.githubusercontent.com/Suacett/Isolated-Training-Experiment/main/proxmox-install.sh)"
+#   bash -c "$(wget -qO- https://raw.githubusercontent.com/Suacett/Isolated-Training-Experiment/MAIN-BRANCH/proxmox-install.sh)"
 #
 # ============================================================================
 
@@ -186,7 +186,7 @@ sleep 10
 
 # Install stock predictor inside container
 msg_info "Installing Stock Predictor inside container..."
-pct exec $CTID -- bash -c "NON_INTERACTIVE=true AV_KEY='$AV_KEY' wget -qO- https://raw.githubusercontent.com/Suacett/Isolated-Training-Experiment/main/install.sh | bash"
+pct exec $CTID -- bash -c "NON_INTERACTIVE=true AV_KEY='$AV_KEY' wget -qO- https://raw.githubusercontent.com/Suacett/Isolated-Training-Experiment/MAIN-BRANCH/install.sh | bash"
 
 # Get container IP
 CTIP=$(pct exec $CTID -- hostname -I | awk '{print $1}')

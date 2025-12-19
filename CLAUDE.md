@@ -534,7 +534,7 @@ Backend endpoints are organized into routers (`backend/routers/`):
 
 ### Git Branch Status
 - **Current Branch**: `Refactor-test`
-- **Main Branch**: `dev-branch`
+- **Main Branch**: `MAIN-BRANCH`
 - **Recent Commits**: Refactored tooltips, V9 ranking tests, portfolio stress test, V9 Transformer features
 
 ### Model Versions Available

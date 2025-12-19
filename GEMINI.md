@@ -153,7 +153,7 @@ docker compose restart backend
 
 ```bash
 # COMPLETE ONE-LINE SETUP (Proxmox Host)
-bash -c "$(wget -qO- https://raw.githubusercontent.com/Suacett/Isolated-Training-Experiment/main/proxmox-install.sh)"
+bash -c "$(wget -qO- https://raw.githubusercontent.com/Suacett/Isolated-Training-Experiment/MAIN-BRANCH/proxmox-install.sh)"
 
 # Start all services (Inside Container)
 docker compose up -d
