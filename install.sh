@@ -8,7 +8,7 @@
 # system or Proxmox LXC container with NVIDIA GPU passthrough support.
 #
 # Usage:
-#   bash -c "$(wget -qO- https://raw.githubusercontent.com/Suacett/Isolated-Training-Experiment/main/install.sh)"
+#   bash -c "$(wget -qO- https://raw.githubusercontent.com/Suacett/Isolated-Training-Experiment/MAIN-BRANCH/install.sh)"
 #
 # Or locally:
 #   chmod +x install.sh && ./install.sh
@@ -29,7 +29,7 @@ set -e
 
 INSTALL_DIR="/opt/stock-predictor"
 REPO_URL="https://github.com/Suacett/Isolated-Training-Experiment.git"
-BRANCH="main"
+BRANCH="MAIN-BRANCH"
 
 # Colors for output
 RED='\033[0;31m'
@@ -265,7 +265,7 @@ INSTALL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$INSTALL_DIR"
 
 echo "[INFO] Pulling latest changes..."
-git pull origin main
+git pull origin MAIN-BRANCH
 
 echo "[INFO] Rebuilding containers..."
 docker compose build

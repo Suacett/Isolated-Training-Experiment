@@ -20,7 +20,7 @@ designed for deployment on Proxmox with optional GPU acceleration.
 ### One-Line Setup (Run on Proxmox Host)
 
 ```bash
-bash -c "$(wget -qO- https://raw.githubusercontent.com/Suacett/Isolated-Training-Experiment/main/proxmox-install.sh)"
+bash -c "$(wget -qO- https://raw.githubusercontent.com/Suacett/Isolated-Training-Experiment/MAIN-BRANCH/proxmox-install.sh)"
 ```
 
 The installer will:
@@ -34,7 +34,7 @@ The installer will:
 If you already have a container or Ubuntu machine:
 
 ```bash
-bash -c "$(wget -qO- https://raw.githubusercontent.com/Suacett/Isolated-Training-Experiment/main/install.sh)"
+bash -c "$(wget -qO- https://raw.githubusercontent.com/Suacett/Isolated-Training-Experiment/MAIN-BRANCH/install.sh)"
 ```
 
 ### Manual Installation
