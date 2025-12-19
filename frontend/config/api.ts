@@ -23,3 +23,8 @@ export const getApiUrl = (endpoint: string): string => {
  * Alias for getApiUrl for backward compatibility
  */
 export const apiUrl = getApiUrl;
+
+// Log API URL for debugging
+if (typeof window !== 'undefined') {
+  console.log('[API Config] Base URL:', API_CONFIG.baseURL);
+}
