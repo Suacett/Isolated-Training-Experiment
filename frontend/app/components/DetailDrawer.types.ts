@@ -79,15 +79,23 @@ export function downsampleData(data: ChartDataPoint[], maxPoints: number): Chart
     const downsampled: ChartDataPoint[] = [data[0]];
 
     for (let i = 1; i < maxPoints - 1; i++) {
-        const bucketStart = Math.floor(i * bucketSize);
-        const bucketEnd = Math.min(bucketStart + bucketSize, data.length);
+        const bucketStart = Math.floor((i * (data.length - 1)) / (maxPoints - 1));
+        const bucketEnd = Math.floor(((i + 1) * (data.length - 1)) / (maxPoints - 1));
 
-        let maxVariation = 0;
+        let maxVariation = -1;
         let selectedPoint = data[bucketStart];
 
         for (let j = bucketStart; j < bucketEnd; j++) {
-            const variation = Math.abs(data[j].close - (data[j].prediction || data[j].close));
-            if (variation > maxVariation) {
+            // Prioritize points with predictions; for null predictions, use close value volatility
+            const comparisonValue =
+                data[j].prediction ?? (j > 0 ? data[j - 1].close : data[j].close);
+            const variation = Math.abs(data[j].close - (comparisonValue as number));
+
+            const hasPrediction = data[j].prediction !== null;
+            const hasNoPrediction = selectedPoint.prediction === null;
+
+            // Prefer points with predictions; fallback to variation in close price
+            if ((hasPrediction && hasNoPrediction) || (hasPrediction === hasNoPrediction && variation > maxVariation)) {
                 maxVariation = variation;
                 selectedPoint = data[j];
             }

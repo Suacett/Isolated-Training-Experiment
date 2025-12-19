@@ -49,18 +49,19 @@ def get_db_url():
 def load_stock_data(ticker: str):
     """Load OHLCV data for a single stock."""
     import psycopg2
-    conn = psycopg2.connect(get_db_url())
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT timestamp, open, high, low, close, volume 
-        FROM stock_prices WHERE ticker = %s ORDER BY timestamp
-    """, (ticker,))
-    records = cur.fetchall()
-    cur.close()
-    conn.close()
-    
-    if records:
-        return pd.DataFrame(records, columns=['date', 'open', 'high', 'low', 'close', 'volume'])
+    try:
+        with psycopg2.connect(get_db_url()) as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT timestamp, open, high, low, close, volume 
+                    FROM stock_prices WHERE ticker = %s ORDER BY timestamp
+                """, (ticker,))
+                records = cur.fetchall()
+                if records:
+                    return pd.DataFrame(records, columns=['date', 'open', 'high', 'low', 'close', 'volume'])
+    except Exception as e:
+        logger.error(f"Error loading {ticker}: {e}")
+        
     return None
 
 
@@ -82,8 +83,8 @@ def load_v7_model():
             scaler_data = pickle.load(f)
             scaler = scaler_data['scaler']
     else:
-        logger.warning("Scaler not found, using fresh StandardScaler")
-        scaler = StandardScaler()
+        logger.error(f"Scaler not found at {scaler_path}. Aborting audit to prevent invalid comparisons.")
+        return None, None
         
     return model, scaler
 
@@ -175,14 +176,28 @@ def run_lazy_prediction_audit():
         
         # === THE KEY METRICS ===
         
+        def get_safe_corr(x, y, desc):
+            try:
+                # Basic validation for pearsonr
+                if len(x) < 2 or len(y) < 2:
+                    return np.nan
+                if np.std(x) == 0 or np.std(y) == 0:
+                    return 0.0
+                
+                corr, _ = pearsonr(x, y)
+                return corr if not np.isnan(corr) else 0.0
+            except Exception as e:
+                logger.warning(f"  Calculation error for {desc}: {e}")
+                return np.nan
+
         # 1. Correlation: Prediction vs Yesterday (THE LAZY SCORE)
-        corr_pred_yesterday, _ = pearsonr(predictions_1d, yesterdays)
+        corr_pred_yesterday = get_safe_corr(predictions_1d, yesterdays, "Pred-Yesterday")
         
         # 2. Correlation: Prediction vs Actual
-        corr_pred_actual, _ = pearsonr(predictions_1d, actuals_1d)
+        corr_pred_actual = get_safe_corr(predictions_1d, actuals_1d, "Pred-Actual")
         
-        # 3. Correlation: Yesterday vs Actual (baseline - how autocorrelated is the stock?)
-        corr_yesterday_actual, _ = pearsonr(yesterdays, actuals_1d)
+        # 3. Correlation: Yesterday vs Actual (baseline)
+        corr_yesterday_actual = get_safe_corr(yesterdays, actuals_1d, "Yesterday-Actual")
         
         # 4. Mean Absolute Prediction Change (is it predicting the same thing?)
         pred_changes = np.abs(np.diff(predictions_1d))

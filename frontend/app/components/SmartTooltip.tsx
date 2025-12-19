@@ -22,9 +22,18 @@ export default function SmartTooltip({
 
     return (
         <div
-            className="relative inline-flex items-center cursor-help group"
+            className="relative inline-flex items-center cursor-help group outline-none focus:ring-1 focus:ring-amber-500/50 rounded"
+            tabIndex={0}
             onMouseEnter={() => setIsVisible(true)}
             onMouseLeave={() => setIsVisible(false)}
+            onFocus={() => setIsVisible(true)}
+            onBlur={() => setIsVisible(false)}
+            onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    setIsVisible(!isVisible);
+                }
+            }}
         >
             {children || (
                 <div className="flex items-center gap-1">
@@ -54,7 +63,7 @@ export default function SmartTooltip({
                     </div>
 
                     {/* Academic View (Theoretical) */}
-                    <div className="px-4 py-3 bg-zinc-900/50 border-t border-white/5">
+                    <div className="px-4 py-3 bg-zinc-900 border-t border-white/5">
                         <span className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold mb-1 block">Academic Formula</span>
                         <p className="text-xs text-zinc-500 font-serif italic leading-relaxed">
                             {academicExplanation}

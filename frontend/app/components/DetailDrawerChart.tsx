@@ -22,7 +22,7 @@ export function CustomTooltip({ active, payload, showPercentage }: {
     if (active && payload && payload.length) {
         const d = payload[0].payload;
         const diff = d.prediction !== null ? d.prediction - d.close : 0;
-        const diffPct = d.prediction !== null ? (diff / d.close) * 100 : 0;
+        const diffPct = (d.prediction !== null && d.close > 0) ? (diff / d.close) * 100 : 0;
 
         return (
             <div className="bg-zinc-900/95 border border-zinc-700 p-3 rounded-lg shadow-xl text-xs backdrop-blur min-w-[200px]">

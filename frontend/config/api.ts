@@ -14,7 +14,7 @@ export const API_CONFIG = {
  * @returns Full URL to the API endpoint
  */
 export const getApiUrl = (endpoint: string): string => {
-  const base = API_CONFIG.baseURL;
+  const base = API_CONFIG.baseURL.endsWith('/') ? API_CONFIG.baseURL.slice(0, -1) : API_CONFIG.baseURL;
   const path = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
   return `${base}${path}`;
 };

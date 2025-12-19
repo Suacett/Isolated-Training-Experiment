@@ -11,7 +11,11 @@ import pandas as pd
 from pathlib import Path
 from typing import Optional, Union
 import logging
-from exceptions import ScalerMissingError, ScalerCorruptedError
+import os  # Added for permissions check
+try:
+    from exceptions import ScalerMissingError, ScalerCorruptedError
+except ImportError:
+    from backend.exceptions import ScalerMissingError, ScalerCorruptedError
 
 logger = logging.getLogger(__name__)
 
@@ -188,12 +192,41 @@ class FeatureScaler:
         """
         from sklearn.preprocessing import StandardScaler
 
-        path = Path(scaler_path)
+        # 1. Path Security Check
+        path = Path(scaler_path).resolve()
+        
+        # Ensure path is within the project root (prevent traversal)
+        try:
+            project_root = Path(__file__).parent.parent.resolve()
+            # Explicit allowlist for /tmp if needed for testing, otherwise strict
+            if not (path.is_relative_to(project_root) or path.is_relative_to(Path("/tmp"))):
+                 logger.error(f"Scaler path {path} is outside allowed roots ({project_root}, /tmp)")
+                 raise ScalerCorruptedError(f"Path verification failed: {path}")
+        except ValueError:
+             # is_relative_to raises ValueError if not relative on some versions, or logic error
+             logger.error(f"Path verification error for {path}")
+             raise ScalerCorruptedError("Invalid path traversal attempt")
+        except Exception as e:
+            logger.error(f"Unexpected path validation error: {e}")
+            raise
+
         if not path.exists():
             raise ScalerMissingError(f"Scaler file not found: {scaler_path}")
+            
+        # 2. Permission Check (Linux/Unix)
+        try:
+            if hasattr(os, 'stat'):
+                st = path.stat()
+                # Check if world-writable (bit 0o002)
+                if st.st_mode & 0o002:
+                     logger.warning(f"⚠️ Scaler file {path} is world-writable! Loading risky.")
+        except Exception as e:
+            logger.warning(f"Could not verify permissions: {e}")
 
         try:
-            with open(scaler_path, 'rb') as f:
+            # Open using the resolved Path object
+            with path.open('rb') as f:
+                # 3. Integrity Check (Basic) - ideally verify hash, here we trust strictly controlled paths
                 scaler_data = pickle.load(f)
 
             if 'scaler' not in scaler_data:
@@ -213,8 +246,9 @@ class FeatureScaler:
         except pickle.UnpicklingError as e:
             raise ScalerCorruptedError(f"Corrupted scaler file: {e}") from e
         except Exception as e:
-            if isinstance(e, (ScalerMissingError, ScalerCorruptedError)):
-                raise
+            # Removed unreachable isinstance(ScalerMissingError) check as requested
+            if isinstance(e, ScalerCorruptedError):
+                 raise
             raise ScalerCorruptedError(f"Failed to load scaler: {e}") from e
 
 

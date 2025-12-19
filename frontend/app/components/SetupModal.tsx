@@ -100,7 +100,7 @@ export default function SetupModal({ onClose }: SetupModalProps) {
 
     useEffect(() => {
         // Fetch system status
-        fetch(getApiUrl("/status"))
+        fetch(getApiUrl("/system/status"))
             .then(res => res.json())
             .then(data => {
                 setKeyStatus({
@@ -110,7 +110,7 @@ export default function SetupModal({ onClose }: SetupModalProps) {
             .catch(console.error);
 
         // Fetch AI status
-        fetch(getApiUrl("/status/ai"))
+        fetch(getApiUrl("/system/status/ai"))
             .then(res => res.json())
             .then(data => setAIStatus(data))
             .catch(console.error);
@@ -120,9 +120,12 @@ export default function SetupModal({ onClose }: SetupModalProps) {
         e.preventDefault();
 
         // Validate that at least one key is provided
-        const keyToSend = useMultipleKeys ? alphaVantageKeys.trim() : alphaVantageKey.trim();
-        if (!keyToSend) {
-            showToast("Please enter at least one API key", "error");
+        const keys = useMultipleKeys
+            ? alphaVantageKeys.split(',').map(k => k.trim()).filter(k => k !== "")
+            : [alphaVantageKey.trim()].filter(k => k !== "");
+
+        if (keys.length === 0) {
+            showToast("Please enter at least one valid API key", "error");
             return;
         }
 
@@ -130,8 +133,8 @@ export default function SetupModal({ onClose }: SetupModalProps) {
 
         try {
             const payload = useMultipleKeys
-                ? { ALPHA_VANTAGE_KEYS: alphaVantageKeys }
-                : { ALPHA_VANTAGE_KEY: alphaVantageKey };
+                ? { ALPHA_VANTAGE_KEYS: keys.join(",") }
+                : { ALPHA_VANTAGE_KEY: keys[0] };
 
             const res = await fetch(getApiUrl("/settings/keys"), {
                 method: "POST",
@@ -142,7 +145,7 @@ export default function SetupModal({ onClose }: SetupModalProps) {
             if (res.ok) {
                 showToast(
                     useMultipleKeys
-                        ? `Settings saved! Using ${alphaVantageKeys.split(",").length} API keys (${alphaVantageKeys.split(",").length * 5} calls/min)`
+                        ? `Settings saved! Using ${keys.length} API keys (${keys.length * 5} calls/min)`
                         : "Settings saved successfully!",
                     "success"
                 );
@@ -349,22 +352,20 @@ export default function SetupModal({ onClose }: SetupModalProps) {
                             <button
                                 type="button"
                                 onClick={() => setUseMultipleKeys(false)}
-                                className={`flex-1 py-2 px-3 rounded text-sm font-medium transition-all ${
-                                    !useMultipleKeys
-                                        ? "bg-emerald-600 text-white"
-                                        : "bg-zinc-700 text-zinc-400 hover:bg-zinc-600"
-                                }`}
+                                className={`flex-1 py-2 px-3 rounded text-sm font-medium transition-all ${!useMultipleKeys
+                                    ? "bg-emerald-600 text-white"
+                                    : "bg-zinc-700 text-zinc-400 hover:bg-zinc-600"
+                                    }`}
                             >
                                 Single Key
                             </button>
                             <button
                                 type="button"
                                 onClick={() => setUseMultipleKeys(true)}
-                                className={`flex-1 py-2 px-3 rounded text-sm font-medium transition-all ${
-                                    useMultipleKeys
-                                        ? "bg-amber-600 text-white"
-                                        : "bg-zinc-700 text-zinc-400 hover:bg-zinc-600"
-                                }`}
+                                className={`flex-1 py-2 px-3 rounded text-sm font-medium transition-all ${useMultipleKeys
+                                    ? "bg-amber-600 text-white"
+                                    : "bg-zinc-700 text-zinc-400 hover:bg-zinc-600"
+                                    }`}
                             >
                                 Multiple Keys
                             </button>

@@ -105,34 +105,30 @@ def get_db_url():
 def get_ticker_list():
     """Get all tickers with sufficient history."""
     import psycopg2
-    conn = psycopg2.connect(get_db_url())
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT ticker, COUNT(*) as count 
-        FROM stock_prices GROUP BY ticker 
-        HAVING COUNT(*) >= %s ORDER BY count DESC LIMIT %s
-    """, (CONFIG["MIN_RECORDS"], CONFIG["MAX_STOCKS"]))
-    results = cur.fetchall()
-    cur.close()
-    conn.close()
-    return [(row[0], row[1]) for row in results]
+    with psycopg2.connect(get_db_url()) as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT ticker, COUNT(*) as count 
+                FROM stock_prices GROUP BY ticker 
+                HAVING COUNT(*) >= %s ORDER BY count DESC LIMIT %s
+            """, (CONFIG["MIN_RECORDS"], CONFIG["MAX_STOCKS"]))
+            results = cur.fetchall()
+            return [(row[0], row[1]) for row in results]
 
 
 def load_single_stock(ticker: str) -> Optional[pd.DataFrame]:
     """Load OHLCV data for a single stock."""
     import psycopg2
-    conn = psycopg2.connect(get_db_url())
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT timestamp, open, high, low, close, volume 
-        FROM stock_prices WHERE ticker = %s ORDER BY timestamp
-    """, (ticker,))
-    records = cur.fetchall()
-    cur.close()
-    conn.close()
-    
-    if records:
-        return pd.DataFrame(records, columns=['date', 'open', 'high', 'low', 'close', 'volume'])
+    with psycopg2.connect(get_db_url()) as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT timestamp, open, high, low, close, volume 
+                FROM stock_prices WHERE ticker = %s ORDER BY timestamp
+            """, (ticker,))
+            records = cur.fetchall()
+            
+            if records:
+                return pd.DataFrame(records, columns=['date', 'open', 'high', 'low', 'close', 'volume'])
     return None
 
 
@@ -274,6 +270,10 @@ def process_all_stocks(
     logger.info(f"Successfully processed {len(stock_dfs)} stocks")
     
     # Fit scaler on training data only
+    if not scaler_samples:
+        logger.error("No training data collected for scaler fitting")
+        return [], None
+
     scaler = StandardScaler()
     all_samples = np.vstack(scaler_samples)
     all_samples = np.nan_to_num(all_samples, nan=0.0, posinf=1e6, neginf=-1e6)
@@ -293,15 +293,23 @@ def compute_global_ranks(stock_dfs: List[pd.DataFrame]) -> List[pd.DataFrame]:
     all_data = pd.concat(stock_dfs, ignore_index=True)
     
     # Compute cross-sectional ranks
+    # Compute cross-sectional ranks
     all_data = compute_cross_sectional_ranks(all_data)
     
-    # Split back into individual stocks
+    # Split back into individual stocks using efficient groupby
+    # This avoids the O(N*Rows) scan that was freezing the script
+    logger.info("Splitting data back to stocks...")
+    grouped = dict(list(all_data.groupby('ticker')))
+    
     result_dfs = []
-    for ticker in [df['ticker'].iloc[0] for df in stock_dfs]:
-        ticker_df = all_data[all_data['ticker'] == ticker].copy()
-        result_dfs.append(ticker_df.sort_values('date').reset_index(drop=True))
+    # Preserve original order
+    for original_df in stock_dfs:
+        ticker = original_df['ticker'].iloc[0]
+        if ticker in grouped:
+            result_dfs.append(grouped[ticker].sort_values('date').reset_index(drop=True))
     
     del all_data
+    del grouped
     gc.collect()
     
     return result_dfs
@@ -490,6 +498,10 @@ def train_pipeline():
     # Process all stocks and fit scaler
     logger.info("\n📊 Phase 1: Processing all stocks...")
     stock_dfs, scaler = process_all_stocks(tickers, spy_data, vix_data)
+    
+    if not stock_dfs or scaler is None:
+        logger.error("❌ Failed to collect training data. Aborting.")
+        return
     
     # Compute global ranks
     logger.info("\n📊 Phase 2: Computing cross-sectional ranks...")

@@ -26,7 +26,7 @@ Usage:
     docker exec proxmox_stock_backend python -m scripts.seed_paper_history --force
 
     # Or locally:
-    export DATABASE_URL=postgresql+asyncpg://postgres:password@localhost:5432/stock_db
+    # export DATABASE_URL=postgresql+asyncpg://postgres:password@localhost:5432/stock_db
     python backend/scripts/seed_paper_history.py --years=2
 """
 
@@ -79,12 +79,12 @@ logger = logging.getLogger(__name__)
 CONFIG = {
     "START_CAPITAL": 10000.0,
     "SESSION_ID": "v9_golden_2025",
-    "SIMULATION_DAYS": 1260,  # 5 years = 252 trading days/year * 5 (NEW DEFAULT)
+    "SIMULATION_DAYS": 1825,  # 5 years = 365 days/year * 5 (Calendar days for timedelta)
     "TOP_K": 10,
     "REBALANCE_DAYS": 5,  # Weekly rebalance
     "WINDOW_SIZE": 60,     # V9 model lookback window
-    "CORRELATION_THRESHOLD": 0.60,  # Golden Config filter
-    "VIX_THRESHOLD": 30.0,  # Go to cash when VIX > 30
+    "CORRELATION_THRESHOLD": 0.75,
+    "VIX_THRESHOLD": 45.0,
 }
 
 # S&P 500 Selection (Diversified across sectors)
@@ -150,10 +150,12 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:password
 # DATABASE FUNCTIONS
 # =============================================================================
 
+# Singleton engine and sessionmaker to avoid leaks
+_engine = create_async_engine(DATABASE_URL, echo=False)
+_AsyncSessionLocal = sessionmaker(_engine, class_=AsyncSession, expire_on_commit=False)
+
 async def get_session():
-    engine = create_async_engine(DATABASE_URL, echo=False)
-    async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-    return async_session()
+    return _AsyncSessionLocal()
 
 
 # =============================================================================
@@ -412,10 +414,16 @@ def compute_correlation_matrix(processed_data: dict, tickers: list, date: pd.Tim
         for j, t2 in enumerate(tickers_list):
             if i != j:
                 try:
-                    corr = np.corrcoef(returns_data[t1], returns_data[t2])[0, 1]
+                    # Align lengths if needed (should be aligned by lookback)
+                    r1 = returns_data[t1]
+                    r2 = returns_data[t2]
+                    min_len = min(len(r1), len(r2))
+                    corr = np.corrcoef(r1[-min_len:], r2[-min_len:])[0, 1]
+                    
                     if not np.isnan(corr):
-                        correlations.append(abs(corr))
-                except:
+                        correlations.append(corr)
+                except (IndexError, ValueError, np.linalg.LinAlgError) as e:
+                    logger.debug(f"Correlation error between {t1} and {t2}: {e}")
                     pass
         corr_avg[t1] = np.mean(correlations) if correlations else 0.5
     
@@ -530,6 +538,7 @@ async def seed_history(force=False):
         
         # 7. Simulation Loop
         import time
+        rankings = {}
         for i, current_date in enumerate(trading_days):
             day_start_time = time.time()  # Track per-day speed
 
@@ -558,7 +567,11 @@ async def seed_history(force=False):
             # VIX Check (Optional - skip trading in panic)
             vix_level = 20.0
             if vix_data is not None and current_date in vix_data.index:
-                vix_level = vix_data.loc[current_date] * 100
+                val = vix_data.loc[current_date]
+                # Scale if it looks like a decimal (e.g. 0.20 instead of 20.0)
+                vix_level = val * 100 if val < 2.0 else val
+                # Sanity clamp
+                vix_level = max(5.0, min(100.0, vix_level))
             
             # REBALANCE (every 5 days)
             if days_since_rebalance >= CONFIG["REBALANCE_DAYS"] and vix_level < CONFIG["VIX_THRESHOLD"]:
@@ -583,26 +596,66 @@ async def seed_history(force=False):
                 top_candidates = [t for t, _ in sorted_stocks[:CONFIG["TOP_K"] * 2]]
                 correlations = compute_correlation_matrix(processed_data or {}, top_candidates, current_date)
                 
-                # Filter: Low correlation stocks only
                 filtered = []
-                for ticker, rank in sorted_stocks:
-                    if ticker in current_prices:
-                        corr = correlations.get(ticker, 0.5)
-                        if corr < CONFIG["CORRELATION_THRESHOLD"]:
-                            filtered.append({'ticker': ticker, 'rank': rank, 'corr': corr, 'price': current_prices[ticker]})
-                            if len(filtered) >= CONFIG["TOP_K"]:
+                # 1. First pass: High rank + Low correlation
+                for t in top_candidates:
+                    if t not in current_prices: continue
+                    
+                    # Check correlation against already selected
+                    is_correlated = False
+                    current_corr = 0.5
+                    
+                    for existing_item in filtered:
+                        existing_ticker = existing_item['ticker']
+                        pair = tuple(sorted((t, existing_ticker)))
+                        if pair in correlations:
+                            corr_val = correlations[pair]
+                            if corr_val > CONFIG["CORRELATION_THRESHOLD"]:
+                                is_correlated = True
                                 break
-                
-                # Fallback if not enough low-corr stocks
+                    
+                    if not is_correlated:
+                        filtered.append({
+                            'ticker': t, 
+                            'rank': rankings.get(t, 0), 
+                            'corr': 0.0, # Placeholder/Avg
+                            'price': current_prices[t]
+                        })
+                        if len(filtered) >= CONFIG["TOP_K"]:
+                            break
+                            
+                # 2. Fallback: Fill remaining spots with highest ranked (ignoring correlation) if needed
                 if len(filtered) < CONFIG["TOP_K"]:
                     for ticker, rank in sorted_stocks:
-                        if ticker in current_prices and ticker not in [f['ticker'] for f in filtered]:
-                            corr = correlations.get(ticker, 0.5)
-                            filtered.append({'ticker': ticker, 'rank': rank, 'corr': corr, 'price': current_prices[ticker]})
-                            if len(filtered) >= CONFIG["TOP_K"]:
-                                break
+                        # Skip if already in filtered
+                        if any(f['ticker'] == ticker for f in filtered):
+                            continue
+                        if ticker not in current_prices:
+                            continue
+                            
+                        filtered.append({
+                            'ticker': ticker, 
+                            'rank': rank, 
+                            'corr': 1.0, # High correlation penalty
+                            'price': current_prices[ticker]
+                        })
+                        if len(filtered) >= CONFIG["TOP_K"]:
+                            break
                 
-                top_picks = filtered[:CONFIG["TOP_K"]]
+                # RECONSTRUCT top_picks with reasons
+                top_picks = []
+                for item in filtered:
+                    ticker = item['ticker']
+                    rank = item['rank']
+                    corr = item.get('corr', 0.5)
+                    top_picks.append({
+                        "ticker": ticker,
+                        "rank": rank,
+                        "reason": f"Rank #{list(rankings.keys()).index(ticker)+1} ({rank:.2f}), Corr: {corr:.2f}",
+                        "price": item['price'],
+                        "corr": corr
+                    })
+                
                 top_tickers = [p['ticker'] for p in top_picks]
                 
                 # SELL: Stocks not in top picks
@@ -735,10 +788,14 @@ async def seed_history(force=False):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Seed V9 paper trading history")
-    parser.add_argument("--years", type=int, default=5, choices=[1, 2, 3, 4, 5],
-                        help="Years of history to backtest (1-5, default: 5 years)")
+    parser.add_argument("--years", type=float, default=5,
+                        help="Years of history to backtest (e.g. 0.2, 1, 5, default: 5)")
     parser.add_argument("--session-id", type=str, default="v9_golden_2025",
                         help="Session ID for this backtest (default: v9_golden_2025)")
+    parser.add_argument("--top-k", type=int, default=10, help="Number of top stocks to pick (default: 10)")
+    parser.add_argument("--corr-threshold", type=float, default=0.6, help="Correlation threshold (default: 0.6)")
+    parser.add_argument("--rebalance-days", type=int, default=5, help="Rebalance every N days (default: 5)")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility (default: 42)")
     parser.add_argument("--force", action="store_true",
                         help="Force re-seed even if session data exists")
     parser.add_argument("--sp500", action="store_true",
@@ -746,8 +803,22 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Update CONFIG based on arguments
-    CONFIG["SIMULATION_DAYS"] = args.years * 252  # 252 trading days per year
+    CONFIG["SIMULATION_DAYS"] = int(args.years * 252)  # 252 trading days per year
     CONFIG["SESSION_ID"] = args.session_id
+    CONFIG["TOP_K"] = args.top_k
+    CONFIG["CORRELATION_THRESHOLD"] = args.corr_threshold
+    CONFIG["REBALANCE_DAYS"] = args.rebalance_days
+    CONFIG["SEED"] = args.seed
+    
+    # Apply seeds immediately
+    import random
+    import numpy as np
+    import torch
+    random.seed(CONFIG["SEED"])
+    np.random.seed(CONFIG["SEED"])
+    torch.manual_seed(CONFIG["SEED"])
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(CONFIG["SEED"])
     
     # Use full S&P 500 if requested
     if args.sp500:

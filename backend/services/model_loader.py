@@ -138,12 +138,12 @@ class MultiModelLoader:
                 device = "cpu"
         
         try:
-            # Load model - use LSTMModelV7 for v7, LSTMModel for others
-            if info.version == "v7":
+            # Load model - use LSTMModelV7 for v7 and v2 (which shares architecture), LSTMModel for others
+            if info.version in ["v7", "v2"]:
+                logger.info(f"Loading {info.version} (V7-architecture) with attention & 64 filters")
                 # LSTMModelV7.load expects torch.device, not string
                 device_obj = torch.device(device)
                 model = LSTMModelV7.load(str(model_path), device=device_obj)
-                logger.info(f"Loading V7 attention model with 41 features")
             else:
                 model = LSTMModel.load(str(model_path), device=device)
             

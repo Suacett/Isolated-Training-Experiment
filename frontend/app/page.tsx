@@ -23,6 +23,8 @@ interface PortfolioSummary {
   days_since_rebalance: number;
   daily_pnl?: number;
   daily_pnl_pct?: number;
+  sharpe_ratio?: number;
+  alpha?: number;
 }
 
 interface Holding {
@@ -73,6 +75,7 @@ export default function Home() {
   const [trades, setTrades] = useState<Trade[]>([]);
   const [equityHistory, setEquityHistory] = useState<EquityPoint[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -89,7 +92,9 @@ export default function Home() {
           total_value: statusData.total_value,
           days_since_rebalance: statusData.days_since_rebalance,
           daily_pnl: statusData.pnl,
-          daily_pnl_pct: statusData.pnl_pct
+          daily_pnl_pct: statusData.pnl_pct,
+          sharpe_ratio: statusData.sharpe_ratio,
+          alpha: statusData.alpha
         });
         setHoldings(statusData.holdings);
 
@@ -110,8 +115,10 @@ export default function Home() {
           setEquityHistory(histData);
         }
 
+        setError(null);
       } catch (e) {
         console.error("Failed to load dashboard data", e);
+        setError("Connection to backend lost. Retrying...");
       } finally {
         setIsLoading(false);
       }
@@ -143,8 +150,22 @@ export default function Home() {
 
   return (
     <main className="min-h-screen bg-[#0A0A0F] text-zinc-100 p-6 font-sans relative">
+      {/* Error State Banner */}
+      {error && (
+        <div className="fixed top-20 left-1/2 -translate-x-1/2 bg-red-500/10 border border-red-500/30 rounded-lg px-6 py-3 flex items-center gap-3 shadow-2xl backdrop-blur-md z-50 animate-bounce">
+          <AlertTriangle className="text-red-500" size={20} />
+          <span className="text-sm text-red-100 font-medium">{error}</span>
+          <button
+            onClick={() => window.location.reload()}
+            className="ml-4 px-3 py-1 bg-red-500/20 hover:bg-red-500/30 rounded text-xs transition-colors"
+          >
+            Reload
+          </button>
+        </div>
+      )}
+
       {/* Loading Indicator */}
-      {isLoading && (
+      {isLoading && !error && (
         <div className="fixed top-20 right-6 bg-amber-500/10 border border-amber-500/30 rounded-lg px-4 py-3 flex items-center gap-3 shadow-xl backdrop-blur-sm z-50 animate-fade-in">
           <div className="flex items-center gap-2">
             <div className="w-4 h-4 border-2 border-amber-500 border-t-transparent rounded-full animate-spin"></div>
@@ -170,7 +191,7 @@ export default function Home() {
                   <h2 className="text-zinc-400 text-sm font-medium uppercase tracking-wider mb-1">Portfolio Equity</h2>
                   <div className="flex items-baseline gap-4">
                     <span className="text-4xl font-display font-bold text-white">
-                      ${(summary?.total_value || 10000).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      {summary ? `$${summary.total_value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "$-.--"}
                     </span>
                     {summary && (
                       <div className={cn("flex items-center text-sm font-medium px-2 py-1 rounded-full bg-white/5",
@@ -270,7 +291,7 @@ export default function Home() {
                 </SmartTooltip>
               </div>
               <div className={cn("text-2xl font-mono font-bold", (summary?.daily_pnl || 0) >= 0 ? "text-emerald-400" : "text-rose-400")}>
-                {(summary?.daily_pnl || 0) >= 0 ? "+" : ""}${Math.abs(summary?.daily_pnl || 0).toLocaleString()}
+                {summary ? `${(summary.daily_pnl || 0) >= 0 ? "+" : ""}$${Math.abs(summary.daily_pnl || 0).toLocaleString()}` : "$-.--"}
               </div>
             </div>
 
@@ -288,8 +309,8 @@ export default function Home() {
                 </SmartTooltip>
               </div>
 
-              <div className="text-2xl font-mono font-bold text-zinc-200">
-                1.84 <span className="text-xs font-normal text-zinc-500 ml-1">(Est.)</span>
+              <div className={cn("text-2xl font-mono font-bold", summary?.sharpe_ratio && summary.sharpe_ratio > 0 ? "text-emerald-400" : "text-zinc-200")}>
+                {summary?.sharpe_ratio !== undefined ? summary.sharpe_ratio.toFixed(2) : "—"} <span className="text-xs font-normal text-zinc-500 ml-1"></span>
               </div>
             </div>
 
@@ -307,8 +328,8 @@ export default function Home() {
                 </SmartTooltip>
               </div>
 
-              <div className="text-2xl font-mono font-bold text-indigo-400">
-                +4.2%
+              <div className={cn("text-2xl font-mono font-bold", (summary?.alpha || 0) >= 0 ? "text-indigo-400" : "text-rose-400")}>
+                {summary?.alpha !== undefined ? `${summary.alpha >= 0 ? "+" : ""}${summary.alpha.toFixed(2)}%` : "—"}
               </div>
             </div>
           </div>

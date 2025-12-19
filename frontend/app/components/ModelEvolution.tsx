@@ -4,7 +4,7 @@ export function ModelEvolutionHistory() {
     return (
         <div className="mt-8 p-6 bg-zinc-900/50 rounded-2xl border border-zinc-800">
             <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
-                <Clock size={20} className="text-amber-400" />
+                <Clock size={20} className="text-amber-400" aria-hidden="true" />
                 Model Evolution History
             </h3>
             <p className="text-sm text-zinc-500 mb-6">
@@ -19,7 +19,7 @@ export function ModelEvolutionHistory() {
                 <div className="relative pl-12 pb-6">
                     <div className="absolute left-2.5 w-3 h-3 rounded-full bg-amber-500/50 border-2 border-amber-500" />
                     <div className="flex items-start gap-3">
-                        <XCircle size={18} className="text-amber-500 mt-0.5 flex-shrink-0" />
+                        <XCircle size={18} className="text-amber-500 mt-0.5 flex-shrink-0" aria-hidden="true" />
                         <div>
                             <h4 className="font-bold text-amber-400">V7 LSTM Regression</h4>
                             <p className="text-xs text-zinc-500 mt-1">
@@ -34,7 +34,7 @@ export function ModelEvolutionHistory() {
                 <div className="relative pl-12 pb-6">
                     <div className="absolute left-2.5 w-3 h-3 rounded-full bg-rose-500/50 border-2 border-rose-500" />
                     <div className="flex items-start gap-3">
-                        <XCircle size={18} className="text-rose-500 mt-0.5 flex-shrink-0" />
+                        <XCircle size={18} className="text-rose-500 mt-0.5 flex-shrink-0" aria-hidden="true" />
                         <div>
                             <h4 className="font-bold text-rose-400">V8 Bi-LSTM</h4>
                             <p className="text-xs text-zinc-500 mt-1">
@@ -50,7 +50,7 @@ export function ModelEvolutionHistory() {
                 <div className="relative pl-12">
                     <div className="absolute left-2.5 w-3 h-3 rounded-full bg-emerald-500/50 border-2 border-emerald-500 animate-pulse" />
                     <div className="flex items-start gap-3">
-                        <CheckCircle size={18} className="text-emerald-500 mt-0.5 flex-shrink-0" />
+                        <CheckCircle size={18} className="text-emerald-500 mt-0.5 flex-shrink-0" aria-hidden="true" />
                         <div>
                             <h4 className="font-bold text-emerald-400">V9 Transformer</h4>
                             <p className="text-xs text-zinc-500 mt-1">

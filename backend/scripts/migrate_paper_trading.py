@@ -32,7 +32,9 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Database connection
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:password@timescaledb:5432/stock_db")
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise ValueError("DATABASE_URL environment variable must be set")
 engine = create_async_engine(DATABASE_URL, echo=False)
 AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 Base = declarative_base()
@@ -55,8 +57,8 @@ class PaperPortfolio(Base):
     equity_value = Column(Float, default=0.0)
     total_value = Column(Float, default=10000.0)
     days_since_rebalance = Column(Integer, default=5)  # Start at 5 to trigger rebalance on first run
-    created_at = Column(DateTime, default=datetime.now)
-    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class PaperHolding(Base):
@@ -67,15 +69,15 @@ class PaperHolding(Base):
     __table_args__ = {'extend_existing': True}
     
     id = Column(Integer, primary_key=True, autoincrement=True)
-    session_id = Column(String, nullable=False)  # Links to PaperPortfolio
+    session_id = Column(String, ForeignKey('paper_portfolio.session_id'), nullable=False)
     ticker = Column(String, nullable=False)
     entry_price = Column(Float, nullable=False)
     quantity = Column(Float, nullable=False)
     current_price = Column(Float, nullable=False)
     stop_loss_level = Column(Float, nullable=False)  # ATR trailing stop
     highest_price = Column(Float, nullable=False)    # For trailing stop calculation
-    entry_date = Column(DateTime, default=datetime.now)
-    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+    entry_date = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class PaperTrade(Base):
@@ -86,7 +88,7 @@ class PaperTrade(Base):
     __table_args__ = {'extend_existing': True}
     
     id = Column(Integer, primary_key=True, autoincrement=True)
-    session_id = Column(String, nullable=False)
+    session_id = Column(String, ForeignKey('paper_portfolio.session_id'), nullable=False)
     trade_date = Column(DateTime, nullable=False)
     action = Column(String, nullable=False)  # 'BUY' or 'SELL'
     ticker = Column(String, nullable=False)
@@ -115,12 +117,13 @@ async def migrate_paper_trading_tables():
         for table_name in tables_to_create:
             try:
                 result = await session.execute(
-                    text(f"SELECT 1 FROM information_schema.tables WHERE table_name = '{table_name}'")
+                    text("SELECT 1 FROM information_schema.tables WHERE table_name = :table_name"),
+                    {"table_name": table_name}
                 )
                 if result.scalar():
                     existing_tables.append(table_name)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.error(f"Error checking table {table_name}: {e}")
         
         if existing_tables:
             logger.info(f"Existing tables found: {existing_tables}")
@@ -147,8 +150,7 @@ async def migrate_paper_trading_tables():
             try:
                 await session.execute(text(stmt))
             except Exception as e:
-                # Index may already exist
-                pass
+                logger.info(f"Note: Index creation status: {e}")
         
         await session.commit()
         logger.info("✅ Indexes created/verified!")
@@ -157,12 +159,13 @@ async def migrate_paper_trading_tables():
         logger.info("\n📋 Paper Trading Schema:")
         for table_name in tables_to_create:
             result = await session.execute(
-                text(f"""
+                text("""
                     SELECT column_name, data_type
                     FROM information_schema.columns
-                    WHERE table_name = '{table_name}'
+                    WHERE table_name = :table_name
                     ORDER BY ordinal_position
-                """)
+                """),
+                {"table_name": table_name}
             )
             columns = result.fetchall()
             logger.info(f"\n  {table_name}:")

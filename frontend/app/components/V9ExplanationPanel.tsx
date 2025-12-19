@@ -37,7 +37,7 @@ export function V9ExplanationPanel() {
 
                     {/* 12 Features */}
                     <section>
-                        <h4 className="text-sm font-bold text-emerald-400 mb-2 uppercase tracking-wider">The 12 Stationary Features</h4>
+                        <h4 className="text-sm font-bold text-emerald-400 mb-2 uppercase tracking-wider">The 10 Stationary Features</h4>
                         <p className="text-sm text-zinc-400 mb-3">
                             V9 uses only <strong className="text-white">stationary</strong> features — no raw prices. It doesn't know if Apple is $50 or $500, only:
                         </p>

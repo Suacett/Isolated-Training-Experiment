@@ -9,25 +9,16 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
       POSTGRES_DB: stock_predictor
-    # ports:
-    #   - "5432:5432"  # Not exposed externally - backend accesses via internal Docker network
+    ports:
+      - "5432:5432" # Exposed for host-based training scripts
     volumes:
       - db_data:/var/lib/postgresql/data
 
   backend:
     build: ./backend
     container_name: proxmox_stock_backend
-    privileged: true # Required for GPU access in LXC containers
-    restart: always
-    dns:
-      - 8.8.8.8
-      - 8.8.4.4
-      - 1.1.1.1
-
-    sysctls:
-      - net.ipv4.ip_forward=1
-    cap_add:
-      - NET_ADMIN
+    # privileged: true # Removed for security.
+    # runtime: nvidia # For Docker Compose V1/V2 legacy compatibility - REMOVED (Invalid)
     environment:
       - ALPHA_VANTAGE_KEY=${ALPHA_VANTAGE_KEY}
       - ALPHA_VANTAGE_KEYS=${ALPHA_VANTAGE_KEYS:-}

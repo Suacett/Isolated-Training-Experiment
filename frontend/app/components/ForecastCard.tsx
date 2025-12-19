@@ -1,33 +1,48 @@
 import { Info, TrendingUp, TrendingDown } from "lucide-react";
 
-interface ForecastCardProps {
+type BaseForecastCardProps = {
     label: string;
     price: number | null;
     changePct: number | null;
     infoText: string;
-    isResult?: boolean;
-    wasCorrect?: boolean;
     showPercentage?: boolean;
     referencePrice?: number;
-}
+};
 
-export function ForecastCard({
-    label,
-    price,
-    changePct,
-    infoText,
-    isResult,
-    wasCorrect,
-    showPercentage,
-    referencePrice
-}: ForecastCardProps) {
+type ResultForecastCardProps = BaseForecastCardProps & {
+    isResult: true;
+    wasCorrect: boolean;
+};
+
+type RegularForecastCardProps = BaseForecastCardProps & {
+    isResult?: false;
+    wasCorrect?: never;
+};
+
+type ForecastCardProps = ResultForecastCardProps | RegularForecastCardProps;
+
+export function ForecastCard(props: ForecastCardProps) {
+    const {
+        label,
+        price,
+        changePct,
+        infoText,
+        isResult,
+        wasCorrect,
+        showPercentage,
+        referencePrice
+    } = props;
     const isPositive = (changePct ?? 0) >= 0;
 
     let displayValue = "N/A";
     if (price !== null) {
-        if (showPercentage && referencePrice) {
-            const relPct = ((price - referencePrice) / referencePrice) * 100;
-            displayValue = `${relPct > 0 ? '+' : ''}${relPct.toFixed(2)}%`;
+        if (showPercentage && referencePrice !== null && referencePrice !== undefined) {
+            if (referencePrice === 0) {
+                displayValue = "0.00%";
+            } else {
+                const relPct = ((price - referencePrice) / referencePrice) * 100;
+                displayValue = `${relPct > 0 ? '+' : ''}${relPct.toFixed(2)}%`;
+            }
         } else {
             displayValue = `$${price.toFixed(2)}`;
         }
@@ -50,9 +65,15 @@ export function ForecastCard({
             {price !== null ? (
                 <>
                     <div className="text-sm font-bold text-white">{displayValue}</div>
-                    <div className={`text-xs font-medium flex items-center gap-0.5 ${isPositive ? 'text-emerald-400' : 'text-rose-400'}`}>
-                        {isPositive ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
-                        {isPositive ? '+' : ''}{changePct?.toFixed(2)}%
+                    <div className={`text-xs font-medium flex items-center gap-0.5 ${changePct !== null ? (changePct >= 0 ? 'text-emerald-400' : 'text-rose-400') : 'text-zinc-500'}`}>
+                        {changePct !== null ? (
+                            <>
+                                {changePct >= 0 ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
+                                {changePct >= 0 ? '+' : ''}{changePct.toFixed(2)}%
+                            </>
+                        ) : (
+                            "—"
+                        )}
                     </div>
                     {isResult && (
                         <div className={`mt-1 text-[10px] font-bold ${wasCorrect ? 'text-emerald-400' : 'text-rose-400'}`}>

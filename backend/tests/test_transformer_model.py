@@ -28,9 +28,9 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from services.transformer_model import (
     TransformerRankModel,
     PositionalEncoding,
-    get_device,
     create_model,
 )
+from services.device_utils import get_device
 
 
 # =============================================================================

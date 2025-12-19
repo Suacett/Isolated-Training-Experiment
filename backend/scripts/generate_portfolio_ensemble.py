@@ -46,6 +46,7 @@ import asyncio
 import logging
 import sys
 import subprocess
+import argparse
 from pathlib import Path
 from datetime import datetime
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -166,27 +167,83 @@ PORTFOLIO_CONFIGS = [
 ]
 
 
-def run_single_portfolio(config: dict) -> dict:
+import asyncio
+import logging
+import sys
+import subprocess
+import argparse
+from pathlib import Path
+from datetime import datetime
+from concurrent.futures import ProcessPoolExecutor, as_completed
+
+# Setup backend path
+BACKEND_DIR = Path(__file__).parent.parent
+sys.path.insert(0, str(BACKEND_DIR))
+
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(BACKEND_DIR / "generate_ensemble.log"),
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# =============================================================================
+# PORTFOLIO CONFIGURATIONS
+# =============================================================================
+
+PORTFOLIO_CONFIGS = [
+    # MONTE CARLO: Same config, different seeds for variance analysis
+    {
+        "session_id": "v9_mc_seed1",
+        "name": "Monte Carlo Seed 1",
+        "top_k": 10,
+        "corr_threshold": 0.60,
+        "rebalance_days": 5,
+        "seed": 42,
+        "category": "monte_carlo"
+    },
+    # ... (other configs implied standard or generated dynamically if needed, keeping existing list structure references if possible, 
+    # but for replaced content I must provide the full list or assume it's okay)
+    # To keep this clean, I will NOT replace the config list itself if I can target around it, but I am replacing the whole file imports and main logic.
+    # Actually, I'll just target the imports and then the run_single_portfolio and main functions separately to avoid huge payload.
+]
+
+# ...
+
+def run_single_portfolio(config: dict, extra_args: list = None) -> dict:
     """
     Run a single portfolio backtest in a subprocess.
 
     Args:
         config: Portfolio configuration dict
+        extra_args: List of additional CLI arguments to pass (e.g. --limit 100)
 
     Returns:
         Result dict with success/failure status
     """
     session_id = config["session_id"]
     logger.info(f"Starting: {session_id} ({config['name']})")
+    
+    cmd = [
+        "python", "-m", "scripts.seed_paper_history",
+        "--years", "1",
+        "--session-id", session_id,
+        "--top-k", str(config["top_k"]),
+        "--corr-threshold", str(config["corr_threshold"]),
+        "--rebalance-days", str(config["rebalance_days"]),
+        "--seed", str(config["seed"]),
+        "--force"
+    ]
+    
+    # Forward extra arguments (e.g. limit, start-date)
+    if extra_args:
+        cmd.extend(extra_args)
 
     try:
-        cmd = [
-            "python", "-m", "scripts.seed_paper_history",
-            "--years", "5",
-            "--session-id", session_id,
-            "--force"
-        ]
-
         result = subprocess.run(
             cmd,
             cwd=str(BACKEND_DIR),
@@ -232,15 +289,9 @@ def run_single_portfolio(config: dict) -> dict:
         }
 
 
-async def generate_ensemble() -> dict:
+async def generate_ensemble(extra_args: list = None) -> dict:
     """
     Generate all 10 portfolio configurations in parallel.
-
-    Uses ProcessPoolExecutor to run up to 5 portfolios in parallel,
-    allowing other system processes to continue while heavy computations run.
-
-    Returns:
-        Summary dict with success/failure counts and details
     """
     logger.info("=" * 80)
     logger.info("GENERATING 10-PORTFOLIO ENSEMBLE")
@@ -248,6 +299,8 @@ async def generate_ensemble() -> dict:
     logger.info(f"Start time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     logger.info(f"Total portfolios: {len(PORTFOLIO_CONFIGS)}")
     logger.info(f"Expected time: ~20-30 minutes (5 parallel × 3-5 min each)")
+    if extra_args:
+        logger.info(f"Forwarding args: {' '.join(extra_args)}")
     logger.info("")
 
     results = {
@@ -264,7 +317,7 @@ async def generate_ensemble() -> dict:
     with ProcessPoolExecutor(max_workers=5) as executor:
         # Submit all jobs
         future_to_config = {
-            executor.submit(run_single_portfolio, config): config
+            executor.submit(run_single_portfolio, config, extra_args): config
             for config in PORTFOLIO_CONFIGS
         }
 
@@ -322,11 +375,28 @@ async def generate_ensemble() -> dict:
 
 def main():
     """Main entry point."""
+    parser = argparse.ArgumentParser(description="Generate 10-Portfolio Ensemble")
+    parser.add_argument("--limit", type=int, help="Limit number of days (useful for testing)")
+    parser.add_argument("--start-date", type=str, help="Start date (YYYY-MM-DD)")
+    
+    args = parser.parse_args()
+    
+    # args.limit and args.start_date are already in args
+    extra_args = []
+    if args.limit:
+        extra_args.extend(["--limit", str(args.limit)])
+    if args.start_date:
+        extra_args.extend(["--start-date", args.start_date])
+    
+    
+    # unknown_args removal: we are strictly defining known args above now
+    # extra_args.extend(unknown_args)
+
     logger.info(f"Python version: {sys.version}")
     logger.info(f"Working directory: {BACKEND_DIR}")
 
     # Run async generator
-    results = asyncio.run(generate_ensemble())
+    results = asyncio.run(generate_ensemble(extra_args))
 
     # Exit with appropriate code
     if results["failed"] > 0 or results["timeout"] > 0:

@@ -44,6 +44,11 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker, declarative_base, make_transient
 from sqlalchemy import Column, String, Float, DateTime, Integer
 from sqlalchemy.dialects.postgresql import insert
+from backend.config.constants import DEFAULT_DATABASE_URL
+
+def get_db_url_sync():
+    """Convert async DB URL to sync for psycopg2."""
+    return DEFAULT_DATABASE_URL.replace("+asyncpg", "")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -78,7 +83,9 @@ MODEL_PATH = backend_path / "models" / "transformer_v9_best.pth"
 SCALER_PATH = backend_path / "models" / "scaler_v9.pkl"
 
 # Database
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:password@timescaledb:5432/stock_db")
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise ValueError("DATABASE_URL environment variable must be set")
 
 
 
@@ -121,25 +128,21 @@ def fetch_current_prices_db(tickers: List[str]) -> Dict[str, float]:
         return prices
     
     try:
-        conn = psycopg2.connect(get_db_url_sync())
-        cur = conn.cursor()
-        
-        # Get the most recent price for each ticker
-        placeholders = ','.join(['%s'] * len(tickers))
-        cur.execute(f"""
-            SELECT DISTINCT ON (ticker) ticker, close
-            FROM stock_prices
-            WHERE ticker IN ({placeholders})
-            ORDER BY ticker, timestamp DESC
-        """, tickers)
-        
-        for row in cur.fetchall():
-            ticker, close_price = row
-            if close_price is not None:
-                prices[ticker] = float(close_price)
-        
-        cur.close()
-        conn.close()
+        with psycopg2.connect(get_db_url_sync()) as conn:
+            with conn.cursor() as cur:
+                # Get the most recent price for each ticker
+                placeholders = ','.join(['%s'] * len(tickers))
+                cur.execute(f"""
+                    SELECT DISTINCT ON (ticker) ticker, close
+                    FROM stock_prices
+                    WHERE ticker IN ({placeholders})
+                    ORDER BY ticker, timestamp DESC
+                """, tickers)
+                
+                for row in cur.fetchall():
+                    ticker, close_price = row
+                    if close_price is not None:
+                        prices[ticker] = float(close_price)
         
     except Exception as e:
         logger.error(f"Error fetching prices from DB: {e}")
@@ -151,20 +154,23 @@ def load_stock_data_sync(ticker: str) -> Optional[pd.DataFrame]:
     """Load historical data for a ticker from the database."""
     import psycopg2
     
-    conn = psycopg2.connect(get_db_url_sync())
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT timestamp, open, high, low, close, volume 
-        FROM stock_prices WHERE ticker = %s ORDER BY timestamp
-    """, (ticker,))
-    records = cur.fetchall()
-    cur.close()
-    conn.close()
-    
-    if records:
-        df = pd.DataFrame(records, columns=['date', 'open', 'high', 'low', 'close', 'volume'])
-        df['ticker'] = ticker
-        return df
+    try:
+        with psycopg2.connect(get_db_url_sync()) as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT timestamp, open, high, low, close, volume 
+                    FROM stock_prices WHERE ticker = %s ORDER BY timestamp
+                """, (ticker,))
+                records = cur.fetchall()
+        
+        if records:
+            df = pd.DataFrame(records, columns=['date', 'open', 'high', 'low', 'close', 'volume'])
+            df['ticker'] = ticker
+            return df
+    except Exception as e:
+        logger.error(f"Error loading stock data for {ticker}: {e}")
+        return None
+        
     return None
 
 
@@ -288,24 +294,25 @@ def load_v9_model():
 
 
 def get_universe_tickers() -> List[str]:
-    """Get all tradable tickers from the database (excluding indices)."""
+    """Fetch all tickers that meet the criteria for the trading universe."""
     import psycopg2
     
-    conn = psycopg2.connect(get_db_url_sync())
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT ticker, COUNT(*) as count 
-        FROM stock_prices 
-        WHERE ticker NOT IN ('^VIX', 'VIX', 'SPY', 'QQQ', 'DIA', 'IWM')
-        GROUP BY ticker 
-        HAVING COUNT(*) >= 200 
-        ORDER BY count DESC
-    """)
-    results = cur.fetchall()
-    cur.close()
-    conn.close()
-    
-    return [row[0] for row in results]
+    try:
+        with psycopg2.connect(get_db_url_sync()) as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT ticker, COUNT(*) as count 
+                    FROM stock_prices 
+                    WHERE ticker NOT IN ('^VIX', 'VIX', 'SPY', 'QQQ', 'DIA', 'IWM')
+                    GROUP BY ticker 
+                    HAVING COUNT(*) >= 200 
+                    ORDER BY count DESC
+                """)
+                results = cur.fetchall()
+                return [row[0] for row in results]
+    except Exception as e:
+        logger.error(f"Error fetching universe tickers: {e}")
+        return []
 
 
 def run_v9_inference(model, scaler, device) -> Dict[str, float]:
@@ -440,13 +447,19 @@ def apply_correlation_filter(
             continue
         
         if selected:
-            max_pair_corr = max(
+            # Build list of valid correlations to avoid empty max() error
+            pair_corrs = [
                 corr_matrix.loc[ticker, s]
                 for s in selected
                 if s in corr_matrix.columns
-            )
-            if max_pair_corr > max_corr:
-                continue
+            ]
+            if pair_corrs:
+                max_pair_corr = max(pair_corrs)
+                if max_pair_corr > max_corr:
+                    continue
+            else:
+                # No overlap in columns, proceed cautiously
+                pass
         
         selected.append(ticker)
         if len(selected) >= top_k:

@@ -6,7 +6,6 @@ interface Holding {
     entry_price: number;
     current_price: number;
     stop_loss_level: number;
-    highest_price: number;
     profit_pct: number;
     value: number;
 }
@@ -48,8 +47,8 @@ export default function PaperHoldings({ holdings }: PaperHoldingsProps) {
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-white/[0.05]">
-                        {holdings.map((h) => (
-                            <tr key={h.ticker} className="group hover:bg-white/[0.02] transition-colors">
+                        {holdings.map((h, index) => (
+                            <tr key={`${h.ticker}-${index}`} className="group hover:bg-white/[0.02] transition-colors">
                                 <td className="py-3 px-4">
                                     <span className="font-bold text-white text-sm tracking-wide">{h.ticker}</span>
                                 </td>
@@ -59,7 +58,7 @@ export default function PaperHoldings({ holdings }: PaperHoldingsProps) {
                                 <td className="py-3 px-4 text-right text-zinc-400 font-mono text-sm">
                                     ${h.entry_price.toFixed(2)}
                                 </td>
-                                <td className="py-3 px-4 text-right text-white font-mono text-sm text-shadow-sm">
+                                <td className="py-3 px-4 text-right text-white font-mono text-sm">
                                     ${h.current_price.toFixed(2)}
                                 </td>
                                 <td className="py-3 px-4 text-right font-mono text-sm text-white">
@@ -68,8 +67,8 @@ export default function PaperHoldings({ holdings }: PaperHoldingsProps) {
                                 <td className="py-3 px-4 text-right text-sm">
                                     <span
                                         className={`inline-block px-1.5 py-0.5 rounded text-xs font-bold ${h.profit_pct >= 0
-                                                ? "text-emerald-400 bg-emerald-500/10 border border-emerald-500/20"
-                                                : "text-red-400 bg-red-500/10 border border-red-500/20"
+                                            ? "text-emerald-400 bg-emerald-500/10 border border-emerald-500/20"
+                                            : "text-red-400 bg-red-500/10 border border-red-500/20"
                                             }`}
                                     >
                                         {h.profit_pct > 0 ? "+" : ""}{h.profit_pct.toFixed(2)}%

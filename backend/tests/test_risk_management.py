@@ -19,9 +19,7 @@ from datetime import datetime, timedelta
 
 
 # Import the module under test
-import sys
-import os
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+# Remove manual path manipulation for better test hygiene
 
 from services.risk_management import (
     calculate_atr,

@@ -205,7 +205,13 @@ configure_environment() {
         echo "Get a free key at: https://www.alphavantage.co/support/#api-key"
         echo ""
         
-        read -p "Enter Alpha Vantage API Key (or press Enter to skip): " AV_KEY
+        if [ -n "$AV_KEY" ]; then
+            msg_info "Using Alpha Vantage key from environment/prompt"
+        else
+            if [ "$NON_INTERACTIVE" != "true" ]; then
+                read -p "Enter Alpha Vantage API Key (or press Enter to skip): " AV_KEY
+            fi
+        fi
         
         if [ -n "$AV_KEY" ]; then
             sed -i "s/your_alpha_vantage_key_here/$AV_KEY/" .env
@@ -333,11 +339,13 @@ main() {
     echo "Installation directory: $INSTALL_DIR"
     echo ""
     
-    read -p "Continue with installation? [Y/n] " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Nn]$ ]]; then
-        msg_warn "Installation cancelled"
-        exit 0
+    if [ "$NON_INTERACTIVE" != "true" ]; then
+        read -p "Continue with installation? [Y/n] " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Nn]$ ]]; then
+            msg_warn "Installation cancelled"
+            exit 0
+        fi
     fi
     
     install_dependencies

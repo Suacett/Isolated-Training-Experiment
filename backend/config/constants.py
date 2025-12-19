@@ -71,3 +71,7 @@ VOLATILITY_PARAMS = {
     "LOOKBACK_PERIOD": 20,
     "TRADING_DAYS_PER_YEAR": 252,
 }
+
+# ----------------------------- Database -----------------------------
+import os
+DEFAULT_DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:password@timescaledb:5432/stock_db")

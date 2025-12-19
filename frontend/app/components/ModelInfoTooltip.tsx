@@ -4,11 +4,21 @@ import { IntrinsicBreakdown, getConfidenceExplanation } from "./DetailDrawer.typ
 export function AIModelInfo({ confidence, accuracy }: { confidence: number; accuracy: number | null }) {
     return (
         <div className="relative inline-block group ml-2">
-            <div className="flex items-center gap-1 px-2 py-1 bg-pink-900/30 border border-pink-700/50 rounded text-[10px] text-pink-400 cursor-help">
+            <div
+                className="flex items-center gap-1 px-2 py-1 bg-pink-900/30 border border-pink-700/50 rounded text-[10px] text-pink-400 cursor-help outline-none focus:ring-1 focus:ring-pink-500"
+                tabIndex={0}
+                role="button"
+                aria-label="AI Model Info"
+                aria-describedby="ai-model-tooltip"
+            >
                 <Info size={10} />
                 <span>AI Model</span>
             </div>
-            <div className="absolute left-0 top-full mt-1 w-64 bg-zinc-900 border border-zinc-700 p-2 rounded shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-[200] pointer-events-none">
+            <div
+                id="ai-model-tooltip"
+                role="tooltip"
+                className="absolute left-0 top-full mt-1 w-64 bg-zinc-900 border border-zinc-700 p-2 rounded shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible group-focus-within:opacity-100 group-focus-within:visible transition-all z-[200] pointer-events-none group-hover:pointer-events-auto group-focus-within:pointer-events-auto"
+            >
                 <div className="text-[10px] text-zinc-300 space-y-1">
                     <div><strong>Model:</strong> Adaptive AI (LSTM/Transformer)</div>
                     <div><strong>Input:</strong> Multi-factor Market Data</div>
@@ -26,16 +36,26 @@ export function IntrinsicInfo({ breakdown }: { breakdown: IntrinsicBreakdown | n
 
     return (
         <div className="relative inline-block group ml-2">
-            <div className="flex items-center gap-1 px-2 py-1 bg-purple-900/30 border border-purple-700/50 rounded text-[10px] text-purple-400 cursor-help">
+            <div
+                className="flex items-center gap-1 px-2 py-1 bg-purple-900/30 border border-purple-700/50 rounded text-[10px] text-purple-400 cursor-help outline-none focus:ring-1 focus:ring-purple-500"
+                tabIndex={0}
+                role="button"
+                aria-label="Intrinsic Value Info"
+                aria-describedby="intrinsic-value-tooltip"
+            >
                 <Info size={10} />
                 <span>Intrinsic Value</span>
             </div>
-            <div className="absolute left-0 top-full mt-1 w-56 bg-zinc-900 border border-zinc-700 p-2 rounded shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-[200] pointer-events-none">
+            <div
+                id="intrinsic-value-tooltip"
+                role="tooltip"
+                className="absolute left-0 top-full mt-1 w-56 bg-zinc-900 border border-zinc-700 p-2 rounded shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible group-focus-within:opacity-100 group-focus-within:visible transition-all z-[200] pointer-events-none group-hover:pointer-events-auto group-focus-within:pointer-events-auto"
+            >
                 <div className="text-[10px] text-zinc-300 space-y-1">
                     <div className="font-medium text-purple-400 mb-1">Graham Formula</div>
                     <div className="grid grid-cols-2 gap-1">
                         <span>EPS:</span><span className="font-mono">${breakdown.eps?.toFixed(2) || 'N/A'}</span>
-                        <span>Growth:</span><span className="font-mono">{((breakdown.growth_rate || 0) * 100).toFixed(1)}%</span>
+                        <span>Growth:</span><span className="font-mono">{breakdown.growth_rate !== null && breakdown.growth_rate !== undefined ? (breakdown.growth_rate * 100).toFixed(1) + '%' : 'N/A'}</span>
                         <span>Bond Yield:</span><span className="font-mono">{breakdown.bond_yield?.toFixed(2) || 'N/A'}%</span>
                         <span>Value:</span><span className="font-mono text-purple-400">${breakdown.intrinsic_value?.toFixed(2) || 'N/A'}</span>
                     </div>

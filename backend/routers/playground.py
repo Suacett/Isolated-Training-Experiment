@@ -92,9 +92,8 @@ def calculate_signals(ticker: str, prediction_score: float, current_price: float
 
         # 3. Similarity/Correlation to Portfolio (simplified - return placeholder)
         # Full correlation calculation would need all portfolio holdings prices
-        # For now return a simplified estimate based on volatility similarity
+        # For now return a simplified estimate based on similarity
         try:
-            stock_vol = historical_data["close"].pct_change().rolling(20).std().iloc[-1] * np.sqrt(252) * 100
             # Assume moderate correlation for display
             avg_correlation = 0.45  # Placeholder - would be calculated from actual holdings
             similarity_pct = avg_correlation * 100
@@ -259,10 +258,11 @@ async def playground_compare(ticker: str, accuracy_days: int = 10):
     for version, loaded in model_loader.loaded_models.items():
         try:
             # Use version-specific feature columns
-            if version == "v7":
-                feature_cols = get_model_input_features_v7()  # 41 features
-            else:
+            # Default to older feature set (41 features) for v2-v8
+            if version == "v9":
                 feature_cols = get_model_input_features()      # 37 features
+            else:
+                feature_cols = get_model_input_features_v7()  # 41 features (v2, v7, v8, etc.)
             
             # Use the model's scaler if available, else fall back to main scaler
             scaler = loaded.scaler or state.scaler
@@ -401,12 +401,10 @@ async def playground_compare_all(accuracy_days: int = 10):
 async def get_model_explanation(ticker: str, model_version: str = "v9"):
     """
     Get model-specific reasoning for why it made a prediction.
-
-    Returns:
-        - why_selected: Why this stock was ranked
-        - key_factors: Top contributing factors
-        - risk_factors: Important risk considerations
     """
+    if not get_playground_enabled():
+        raise HTTPException(status_code=400, detail="Model Playground is disabled. Enable it in Settings first.")
+        
     try:
         # Get current data for context
         current_price = await get_latest_close(ticker)

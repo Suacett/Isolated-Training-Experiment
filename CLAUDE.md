@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Proxmox AI Stock Predictor - A GPU-accelerated stock/crypto prediction platform featuring multiple ML architectures (LSTM, Transformer, V9 ensemble), FastAPI backend, Next.js frontend, and TimescaleDB for time-series storage. Integrates Yahoo Finance (primary data source), Alpaca Markets API (trading), and Alpha Vantage (fundamentals). Includes paper trading, portfolio stress testing, and real-time prediction generation.
+Proxmox AI Stock Predictor - A GPU-accelerated stock/crypto prediction platform featuring multiple ML architectures (LSTM, Transformer, V9 ensemble), FastAPI backend, Next.js frontend, and TimescaleDB for time-series storage. Integrates Yahoo Finance (primary data source), Alpha Vantage (price + fundamentals fallback), and Alpaca Markets API (trading/paper-trading execution only — not the primary data source unless explicitly configured as an optional secondary data source). Includes paper trading, portfolio stress testing, and real-time prediction generation.
 
 ## Commands
 
@@ -56,8 +56,9 @@ npm run lint     # ESLint
 ### Data Flow
 ```
 Yahoo Finance (Primary) → YahooFinanceClient → TimescaleDB → FastAPI → Next.js Dashboard
-       ↓ (Fallback)                                              ↑
-Alpaca Markets API                                Alpha Vantage (Sentiment/EPS - favorites only)
+       ↓ (Price/Fundamentals Fallback)                          ↑
+Alpha Vantage                                            Alpha Vantage (Sentiment/EPS - favorites only)
+(Alpaca: Trading/Execution Only)
 ```
 
 ### Backend Services (`backend/services/`)
@@ -118,25 +119,23 @@ HOLD: otherwise
   - `GET /forecasts/{ticker}` - Multi-horizon AI predictions (1d, 1w, 1m, 6m)
 - **playground.py**: Model comparison
   - `POST /playground/compare` - Compare predictions across multiple model versions
-- **paper.py**: Paper trading (V9)
-  - `GET /paper/holdings` - Get current paper trading portfolio
-  - `GET /paper/trades` - Get trade history
-  - `POST /paper/sync` - Sync paper trading with live data
-  - `DELETE /paper/reset` - Reset paper trading account
-- **portfolio_comparison.py**: Portfolio analysis
-  - `GET /portfolio/stress-test` - Stress test portfolio under various market scenarios
-  - `GET /portfolio/comparison` - Compare portfolio metrics across different allocations
+- **paper.py**: Paper trading status and history
+  - `GET /paper/status` - Summary of paper trading (holdings, equity, stats)
+  - `GET /paper/history` - Historical equity curve
+  - `GET /paper/trades` - Trade history
+- **portfolio_comparison.py**: Portfolio Laboratory / Stress testing
+  - `GET /paper/portfolios/compare` - Compare metrics of lab scenarios
+  - `GET /paper/portfolios/{sessionId}/history` - Historical data for specific lab scenario
 
 ### Utility Modules (`backend/utils/`)
 - **config_loader.py**: Load/save API keys and settings from `secrets.json`
 
 ### Training Scripts (`backend/scripts/`)
-- **train_model_v7.py**: RECOMMENDED - Train with BiLSTM + Attention, 41 features, DirectionalLoss
+- **seed_multi_portfolio.py**: LABORATORY - Populates multiple stress-test scenarios (2005-2024). Recommended: `--all`.
+- **seed_paper_history.py**: Populates 1-year of random paper trading history for dashboard testing.
+- **train_model_v9.py**: Train the production Transformer model.
+- **train_model_v7.py**: RECOMMENDED (Price) - Train with BiLSTM + Attention, 41 features, DirectionalLoss
 - **train_model_v6.py**: Train with all stocks, 128 hidden units, clean data
-- **train_model_v5.py**: Train with all stocks, 64 hidden units
-- **train_model_v4.py**: Train with 200 stocks (may OOM on low RAM)
-- **train_model_v3.py**: Train with 100 stocks
-- **train_model_legacy.py**: Original 31 stocks training script
 - **check_gpu.py**: Verify CUDA availability
 - **init_db.py**: Initialize database schema
 - **clean_db.py**: Database maintenance utilities
@@ -525,8 +524,8 @@ Backend endpoints are organized into routers (`backend/routers/`):
 ## Current Status (2025-12-15)
 
 ### Active Production Features
-- ✅ **V9 Transformer Ranking Model**: Live inference and paper trading
-- ✅ **Paper Trading**: Automated daily execution at 4:30 PM EST (weekdays)
+- ✅ **V9 Transformer Ranking Model**: Live inference and paper trading (*Frontend Visualization Pending*)
+- ✅ **Paper Trading**: Automated daily execution at 4:30 PM EST (*UI Enhancements in Phase 1.3 Pending*)
 - ✅ **Portfolio Stress Testing**: Scenario analysis under adverse markets
 - ✅ **V8 Classification Model**: Directional prediction with attention
 - ✅ **Multi-Router Architecture**: Modular endpoint organization

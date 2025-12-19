@@ -18,9 +18,7 @@ from datetime import datetime, timedelta
 
 
 # Import the module under test
-import sys
-import os
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+# Remove manual path manipulation
 
 from services.feature_engineering_v9 import (
     V9_FEATURE_NAMES,
@@ -409,5 +407,4 @@ def test_spy_correlation_with_missing_dates(sample_ohlcv_data):
     assert isinstance(result, pd.DataFrame)
 
 
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+# Removed pytest.main()

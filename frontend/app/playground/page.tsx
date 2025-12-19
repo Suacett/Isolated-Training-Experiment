@@ -8,8 +8,7 @@ export default function PlaygroundPage() {
 
     return (
         <div className="flex flex-col min-h-screen">
-            {/* We pass a no-op or actual redirect for compatibility, 
-                 though we plan to remove the Back button from component */}
+            {/* Passing onBack to navigate back to dashboard */}
             <ModelPlayground onBack={() => router.push('/')} />
         </div>
     );

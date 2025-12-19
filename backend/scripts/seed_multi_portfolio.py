@@ -2,12 +2,16 @@
 """
 Multi-Portfolio Seed Script - V9 Parameter Comparison
 
-Creates 7 different portfolio simulations to compare V9 behavior under:
-1. Different parameter configurations (aggressive, conservative, etc.)
-2. Different historical periods (2008 crisis, 2022 bear market)
+Creates 9 different portfolio simulations to compare V9 behavior under:
+1. Different parameter configurations (aggressive, conservative, golden, etc.)
+2. Different historical periods (2008 crisis, 2020 covid, 2022 bear, 20yr ultimate)
+
+Configs include:
+- golden_2020, aggressive, conservative, no_vix, daily
+- covid_2020, crisis_2008, bear_2022, ultimate_20yr
 
 Usage:
-    python -m scripts.seed_multi_portfolio --all           # Run all 7 portfolios
+    python -m scripts.seed_multi_portfolio --all           # Run all 9 portfolios
     python -m scripts.seed_multi_portfolio --config golden # Run specific config
     python -m scripts.seed_multi_portfolio --list          # List available configs
 """
@@ -274,12 +278,11 @@ async def run_portfolio_simulation(
     vix_df.columns = [c.lower() for c in vix_df.columns]
     
     # Process SPY/VIX
-    # Process SPY/VIX
     if spy_df.empty:
-        logger.error("⚠️ CRITICAL: SPY data fetch failed! Simulation will be invalid.")
-        spy_data = None
-    else:
-        spy_data = process_spy_data(spy_df)
+        logger.error("⚠️ CRITICAL: SPY data fetch failed! Aborting simulation.")
+        return {"error": "SPY data fetch failed"}
+    
+    spy_data = process_spy_data(spy_df)
         
     if vix_df.empty:
         logger.warning("⚠️ VIX data fetch failed! Using default VIX=20.")
@@ -306,8 +309,8 @@ async def run_portfolio_simulation(
             days_since_rebalance = config['rebalance_days']  # Ready to rebalance immediately
             
             total_trades = 0
-            max_value = config['start_capital']
-            min_value = config['start_capital']
+            peak_value = config['start_capital']
+            max_drawdown = 0.0
             
             # Pre-compute features for all stocks
             processed_data = {}
@@ -346,8 +349,14 @@ async def run_portfolio_simulation(
                     for t in holdings
                 )
                 total_value = current_cash + equity_value
-                max_value = max(max_value, total_value)
-                min_value = min(min_value, total_value)
+                
+                # Peak-to-trough drawdown logic
+                if total_value > peak_value:
+                    peak_value = total_value
+                
+                current_drawdown = (peak_value - total_value) / peak_value
+                if current_drawdown > max_drawdown:
+                    max_drawdown = current_drawdown
                 
                 # Get VIX level for this day
                 vix_level = 20.0
@@ -481,13 +490,13 @@ async def run_portfolio_simulation(
             
             # Calculate metrics
             total_return = ((final_value / config['start_capital']) - 1) * 100
-            max_drawdown = ((max_value - min_value) / max_value) * 100
+            max_drawdown_pct = max_drawdown * 100
             
             logger.info(f"\n{'='*70}")
             logger.info(f"COMPLETED: {config['display_name']}")
             logger.info(f"Final Value: ${final_value:,.2f}")
             logger.info(f"Total Return: {total_return:+.2f}%")
-            logger.info(f"Max Drawdown: {max_drawdown:.2f}%")
+            logger.info(f"Max Drawdown: {max_drawdown_pct:.2f}%")
             logger.info(f"Total Trades: {total_trades}")
             logger.info(f"{'='*70}")
             
@@ -526,7 +535,7 @@ async def run_portfolio_simulation(
                 "description": config['description'],
                 "final_value": final_value,
                 "total_return": total_return,
-                "max_drawdown": max_drawdown,
+                "max_drawdown": max_drawdown_pct,
                 "total_trades": total_trades,
                 "start_date": config['start_date'],
                 "end_date": config['end_date'],
@@ -565,9 +574,18 @@ async def main():
     if MODEL_PATH.exists():
         model = TransformerRankModel.load(str(MODEL_PATH), device=device)
         model.eval()
-        with open(SCALER_PATH, 'rb') as f:
-            scaler_data = pickle.load(f)
-        scaler = scaler_data['scaler']
+        
+        if not SCALER_PATH.exists():
+            logger.error(f"Scaler not found at {SCALER_PATH}")
+            return
+            
+        try:
+            with open(SCALER_PATH, 'rb') as f:
+                scaler_data = pickle.load(f)
+            scaler = scaler_data['scaler']
+        except Exception as e:
+            logger.error(f"Failed to load scaler: {e}")
+            return
     else:
         logger.error(f"Model not found at {MODEL_PATH}")
         return

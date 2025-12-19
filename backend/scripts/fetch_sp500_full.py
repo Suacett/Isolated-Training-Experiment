@@ -84,7 +84,7 @@ def get_sp500_fallback() -> list:
         "SYK", "ZTS", "VRTX", "LRCX", "MO", "CB", "TMUS", "NOW", "CME", "EOG",
         "SCHW", "NOC", "SNPS", "PGR", "DUK", "SO", "CDNS", "SLB", "MMC", "BSX",
         # 101-150
-        "ITW", "BDX", "MU", "APD", "FDX", "ETN", "CSX", "CL", "ATVI", "ICE",
+        "ITW", "BDX", "MU", "APD", "FDX", "ETN", "CSX", "CL", "ICE",
         "HUM", "MCK", "GD", "TGT", "EMR", "FISV", "PNC", "NSC", "WM", "NXPI",
         "MAR", "ROP", "ECL", "USB", "AON", "FCX", "MCO", "GM", "HCA", "PSX",
         "KMB", "APH", "AZO", "SRE", "CTSH", "VLO", "F", "CNC", "MPC", "ADM",
@@ -93,7 +93,7 @@ def get_sp500_fallback() -> list:
         "D", "AEP", "AFL", "SHW", "TRV", "PH", "DHI", "NEM", "ALL", "GIS",
         "DXCM", "KMI", "EW", "DD", "TT", "HES", "MSCI", "IQV", "PAYX", "YUM",
         "WELL", "PRU", "HAL", "STZ", "WMB", "LEN", "MTD", "PPG", "EXC", "IDXX",
-        "STT", "EA", "FTNT", "AMP", "ALB", "ODFL", "KEYS", "BK", "FRC", "WST",
+        "STT", "EA", "FTNT", "AMP", "ALB", "ODFL", "KEYS", "BK", "WST",
         "DLR", "ROK", "RMD", "FIS", "CPRT", "KDP", "HPQ", "GWW", "BIIB", "CHD"
     ]
 
@@ -191,37 +191,33 @@ async def fetch_all_data(tickers: list, mode: str = "full", concurrency: int = 1
 
 def get_database_stats():
     """Get current database statistics."""
-    import psycopg2
-    
-    DATABASE_URL = os.getenv("DATABASE_URL", "")
+    DATABASE_URL = os.getenv("DATABASE_URL")
+    if not DATABASE_URL:
+        raise ValueError("DATABASE_URL environment variable must be set")
     db_url = DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://")
     
-    conn = psycopg2.connect(db_url)
-    cur = conn.cursor()
-    
-    # Total unique tickers
-    cur.execute("SELECT COUNT(DISTINCT ticker) FROM stock_prices")
-    total_tickers = cur.fetchone()[0]
-    
-    # Total records
-    cur.execute("SELECT COUNT(*) FROM stock_prices")
-    total_records = cur.fetchone()[0]
-    
-    # Tickers with 500+ records (usable for training)
-    cur.execute("""
-        SELECT COUNT(*) FROM (
-            SELECT ticker FROM stock_prices 
-            GROUP BY ticker HAVING COUNT(*) >= 500
-        ) t
-    """)
-    usable_tickers = cur.fetchone()[0]
-    
-    # Date range
-    cur.execute("SELECT MIN(timestamp), MAX(timestamp) FROM stock_prices")
-    min_date, max_date = cur.fetchone()
-    
-    cur.close()
-    conn.close()
+    with psycopg2.connect(db_url) as conn:
+        with conn.cursor() as cur:
+            # Total unique tickers
+            cur.execute("SELECT COUNT(DISTINCT ticker) FROM stock_prices")
+            total_tickers = cur.fetchone()[0]
+            
+            # Total records
+            cur.execute("SELECT COUNT(*) FROM stock_prices")
+            total_records = cur.fetchone()[0]
+            
+            # Tickers with 500+ records (usable for training)
+            cur.execute("""
+                SELECT COUNT(*) FROM (
+                    SELECT ticker FROM stock_prices 
+                    GROUP BY ticker HAVING COUNT(*) >= 500
+                ) t
+            """)
+            usable_tickers = cur.fetchone()[0]
+            
+            # Date range
+            cur.execute("SELECT MIN(timestamp), MAX(timestamp) FROM stock_prices")
+            min_date, max_date = cur.fetchone()
     
     return {
         "total_tickers": total_tickers,
@@ -242,37 +238,39 @@ def validate_data():
     conn = psycopg2.connect(db_url)
     cur = conn.cursor()
     
-    stats = get_database_stats()
-    
-    logger.info("=" * 60)
-    logger.info("📋 DATABASE STATISTICS")
-    logger.info("=" * 60)
-    logger.info(f"Total unique tickers: {stats['total_tickers']:,}")
-    logger.info(f"Tickers with 500+ records (usable): {stats['usable_tickers']:,}")
-    logger.info(f"Total records: {stats['total_records']:,}")
-    if stats['min_date'] and stats['max_date']:
-        logger.info(f"Date range: {stats['min_date'].strftime('%Y-%m-%d')} to {stats['max_date'].strftime('%Y-%m-%d')}")
-    
-    # V8 Non-Overlapping Window estimate
-    # With stride=126, each 4000-day stock gives ~30 samples
-    # Usable = 500+ records = ~3-4 years = ~1000 records = ~7 samples
-    # With 500 stocks = 500 * 7 = 3500 samples
-    estimated_v8_samples = stats['usable_tickers'] * 7
-    logger.info(f"\n🎯 Estimated V8 training samples (non-overlapping): ~{estimated_v8_samples:,}")
-    
-    # Check for stocks with long history (2008)
-    cur.execute("""
-        SELECT COUNT(*) FROM (
-            SELECT ticker FROM stock_prices 
-            WHERE timestamp < '2010-01-01'
-            GROUP BY ticker HAVING COUNT(*) >= 100
-        ) t
-    """)
-    stocks_with_2008 = cur.fetchone()[0]
-    logger.info(f"Stocks with 2008 crisis data: {stocks_with_2008:,}")
-    
-    cur.close()
-    conn.close()
+    try:
+        stats = get_database_stats()
+        
+        logger.info("=" * 60)
+        logger.info("📋 DATABASE STATISTICS")
+        logger.info("=" * 60)
+        logger.info(f"Total unique tickers: {stats['total_tickers']:,}")
+        logger.info(f"Tickers with 500+ records (usable): {stats['usable_tickers']:,}")
+        logger.info(f"Total records: {stats['total_records']:,}")
+        if stats['min_date'] and stats['max_date']:
+            logger.info(f"Date range: {stats['min_date'].strftime('%Y-%m-%d')} to {stats['max_date'].strftime('%Y-%m-%d')}")
+        
+        # V8 Non-Overlapping Window estimate
+        # With stride=126, each 4000-day stock gives ~30 samples
+        # Usable = 500+ records = ~3-4 years = ~1000 records = ~7 samples
+        # With 500 stocks = 500 * 7 = 3500 samples
+        estimated_v8_samples = stats['usable_tickers'] * 7
+        logger.info(f"\n🎯 Estimated V8 training samples (non-overlapping): ~{estimated_v8_samples:,}")
+        
+        # Check for stocks with long history (2008)
+        cur.execute("""
+            SELECT COUNT(*) FROM (
+                SELECT ticker FROM stock_prices 
+                WHERE timestamp < '2010-01-01'
+                GROUP BY ticker HAVING COUNT(*) >= 100
+            ) t
+        """)
+        stocks_with_2008 = cur.fetchone()[0]
+        logger.info(f"Stocks with 2008 crisis data: {stocks_with_2008:,}")
+        
+    finally:
+        cur.close()
+        conn.close()
     
     logger.info("=" * 60)
     return stats
@@ -330,7 +328,16 @@ async def main():
     # Fetch all data
     results = await fetch_all_data(unique_tickers, mode=mode, concurrency=args.concurrency)
     
-    total_records = sum(r["records"] for r in results["success"])
+    # Verify record type and sum safely
+    def get_record_count(r):
+        recs = r.get("records", 0)
+        if isinstance(recs, list):
+            return len(recs)
+        if isinstance(recs, (int, float)):
+            return int(recs)
+        return 0
+
+    total_records = sum(get_record_count(r) for r in results["success"])
     logger.info(f"\n📊 Fetch Results:")
     logger.info(f"   Success: {len(results['success'])}")
     logger.info(f"   Failed: {len(results['failed'])}")

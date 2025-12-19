@@ -7,7 +7,8 @@ designed for deployment on Proxmox with optional GPU acceleration.
 
 - **V9 Transformer AI**: State-of-the-art relative strength ranking model (12 stationary features)
 - **Multi-Model Playground**: Compare predictions across V6, V7, V8, and V9 models
-- **Paper Trading Simulator**: 5-year backtesting with Top-10 ranking + correlation filters
+- **Laboratory (Stress-Test)**: 20-year historical backtesting (2005-2024) across 9 strategic variants
+- **Paper Trading Simulator**: Interactive dashboard with real-time portfolio tracking and daily rebalancing
 - **Real-Time Dashboard**: Next.js frontend with interactive charts and prediction visualization
 - **Intrinsic Value Analysis**: Graham Number calculations using Alpha Vantage EPS data
 - **Multi-Asset Support**: Stocks, ETFs, and cryptocurrencies
@@ -16,17 +17,25 @@ designed for deployment on Proxmox with optional GPU acceleration.
 
 ## Quick Start
 
-### One-Line Installation (Proxmox/Debian/Ubuntu)
+### One-Line Setup (Run on Proxmox Host)
 
 ```bash
-bash -c "$(wget -qO- https://raw.githubusercontent.com/Suacett/Isolated-Training-Experiment/MAIN-BRANCH/install.sh)"
+bash -c "$(wget -qO- https://raw.githubusercontent.com/Suacett/Isolated-Training-Experiment/main/proxmox-install.sh)"
 ```
 
 The installer will:
-1. Install Docker and Docker Compose
-2. Configure NVIDIA Container Toolkit (if GPU detected)
-3. Clone and configure the application
-4. Start all services
+1. Create a new LXC container with optimized resources (8GB RAM, 50GB Disk)
+2. **Auto-configure NVIDIA GPU passthrough** if a GPU is detected
+3. Install Docker, NVIDIA Container Toolkit, and all repo dependencies
+4. Start the full application (Frontend + Backend + DB)
+
+### Alternate Installation (Pre-existing Linux/LXC)
+
+If you already have a container or Ubuntu machine:
+
+```bash
+bash -c "$(wget -qO- https://raw.githubusercontent.com/Suacett/Isolated-Training-Experiment/main/install.sh)"
+```
 
 ### Manual Installation
 
@@ -92,11 +101,11 @@ docker compose restart backend
 
 ### Training Options
 
-| Script | Model | Description |
-|--------|-------|-------------|
-| train_model_v9 | Transformer | Relative strength ranking (12 features) |
-| train_model_v7 | Attention LSTM | Price prediction (41 features) |
-| train_model_v6 | Standard LSTM | Legacy (37 features) |
+| `train_model_v9` | Transformer | Relative strength ranking (12 features) |
+| `seed_multi_portfolio` | Simulator | Populates Laboratory with 20-year variants |
+| `train_model_v8_class` | Classification LSTM | Directional prediction (Regime Detection) |
+| `train_model_v7` | Attention LSTM | Price prediction (41 features) |
+| `train_model_v6` | Standard LSTM | Legacy (37 features) |
 
 See [TRAINING_GUIDE.md](TRAINING_GUIDE.md) for detailed training instructions.
 
@@ -165,7 +174,7 @@ docker exec -it proxmox_stock_backend bash
 | /forecasts/{ticker} | GET | Multi-horizon predictions |
 | /stocks/ | GET/POST/DELETE | Watchlist management |
 | /ingest/{ticker} | POST | Trigger data sync |
-| /market-status | GET | Current market regime (VIX/SPY) |
+| /market-status | GET | Returns VIX level, regime (Normal/Volatile/Panic), and SPY trend |
 
 See [docs/API.md](docs/API.md) for complete API reference.
 

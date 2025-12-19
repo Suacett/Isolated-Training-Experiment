@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Optional
 from datetime import datetime
 from pydantic import BaseModel
+import asyncio
 
 from services.db import (
     AsyncSessionLocal, 
@@ -12,6 +13,9 @@ from services.db import (
     PaperTrade, 
     PAPER_SESSION_ID
 )
+
+import logging
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/paper", tags=["Paper Trading"])
 
@@ -32,6 +36,7 @@ class HoldingResponse(BaseModel):
     value: float
 
 class TradeResponse(BaseModel):
+    id: int
     date: datetime
     action: str
     ticker: str
@@ -48,6 +53,8 @@ class PortfolioStatusResponse(BaseModel):
     pnl: float
     pnl_pct: float
     days_since_rebalance: int
+    sharpe_ratio: Optional[float] = None
+    alpha: Optional[float] = None
     holdings: List[HoldingResponse]
     recent_trades: List[TradeResponse]
 
@@ -71,6 +78,8 @@ async def get_paper_status(db: AsyncSession = Depends(get_db)):
             pnl=0.0,
             pnl_pct=0.0,
             days_since_rebalance=0,
+            sharpe_ratio=0.0,
+            alpha=0.0,
             holdings=[],
             recent_trades=[]
         )
@@ -83,7 +92,12 @@ async def get_paper_status(db: AsyncSession = Depends(get_db)):
     
     holdings_list = []
     for h in db_holdings:
-        profit_pct = ((h.current_price - h.entry_price) / h.entry_price) * 100
+        # Guard against zero entry price
+        if h.entry_price and h.entry_price != 0:
+            profit_pct = ((h.current_price - h.entry_price) / h.entry_price) * 100
+        else:
+            profit_pct = 0.0
+            
         value = h.quantity * h.current_price
         
         holdings_list.append(HoldingResponse(
@@ -109,6 +123,7 @@ async def get_paper_status(db: AsyncSession = Depends(get_db)):
     trades_list = []
     for t in db_trades:
         trades_list.append(TradeResponse(
+            id=t.id,
             date=t.trade_date,
             action=t.action,
             ticker=t.ticker,
@@ -118,10 +133,55 @@ async def get_paper_status(db: AsyncSession = Depends(get_db)):
             profit_loss=t.profit_loss
         ))
         
-    # Calculate Total P/L
-    initial_capital = 10000.0 # Could store this in DB too, but hardcoded for now per script
-    pnl = portfolio.total_value - initial_capital
-    pnl_pct = (pnl / initial_capital) * 100
+    # --- Calculate Metrics (Phase 2: Use metrics service) ---
+    from services.db import PaperPortfolioHistory, StockPrice
+    from services.metrics import calculate_sharpe_ratio, calculate_alpha, calculate_total_return
+    
+    # 1. Fetch History for Sharpe
+    result = await db.execute(
+        select(PaperPortfolioHistory)
+        .where(PaperPortfolioHistory.session_id == PAPER_SESSION_ID)
+        .order_by(PaperPortfolioHistory.date)
+    )
+    history = result.scalars().all()
+    
+    sharpe_ratio = 0.0
+    alpha = 0.0
+    
+    if len(history) > 5:
+        # Calculate Sharpe using service layer
+        values = [h.total_value for h in history]
+        sharpe_ratio = calculate_sharpe_ratio(values)
+                
+        # 2. Calculate Alpha vs SPY using service layer
+        try:
+            start_date = history[0].date
+            end_date = history[-1].date
+            
+            # Fetch SPY prices for the same period
+            spy_result = await db.execute(
+                select(StockPrice.close)
+                .where(StockPrice.ticker == "SPY")
+                .where(StockPrice.timestamp >= start_date)
+                .where(StockPrice.timestamp <= end_date)
+                .order_by(StockPrice.timestamp)
+            )
+            spy_prices = spy_result.scalars().all()
+            
+            if len(spy_prices) > 2:
+                alpha = calculate_alpha(
+                    portfolio_start_value=history[0].total_value,
+                    portfolio_end_value=portfolio.total_value,
+                    benchmark_start_price=spy_prices[0],
+                    benchmark_end_price=spy_prices[-1]
+                )
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"Failed to calculate Alpha: {e}")
+
+    # Calculate Total P/L using service layer
+    initial_capital = 10000.0
+    pnl, pnl_pct = calculate_total_return(portfolio.total_value, initial_capital)
     
     return PortfolioStatusResponse(
         session_id=portfolio.session_id,
@@ -131,6 +191,8 @@ async def get_paper_status(db: AsyncSession = Depends(get_db)):
         pnl=pnl,
         pnl_pct=pnl_pct,
         days_since_rebalance=portfolio.days_since_rebalance,
+        sharpe_ratio=round(float(sharpe_ratio), 2),
+        alpha=round(float(alpha), 2),
         holdings=holdings_list,
         recent_trades=trades_list
     )
@@ -211,6 +273,9 @@ async def get_paper_trades(
     # Clamp limit to reasonable bounds
     limit = min(limit, 500)
     limit = max(limit, 10)
+    
+    # Ensure offset is non-negative
+    offset = max(offset, 0)
 
     # Get total count
     count_result = await db.execute(
@@ -232,6 +297,7 @@ async def get_paper_trades(
     trades_list = []
     for t in db_trades:
         trades_list.append(TradeResponse(
+            id=t.id,
             date=t.trade_date,
             action=t.action,
             ticker=t.ticker,
@@ -286,28 +352,41 @@ async def reset_and_simulate(
         # Remove empty string from command
         cmd = [c for c in cmd if c]
 
-        # Run the script
-        result = subprocess.run(
-            cmd,
+        # Run the script non-blocking using asyncio
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
             cwd=str(backend_dir),
-            capture_output=True,
-            text=True,
-            timeout=600  # 10 minute timeout for 5-year simulation
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
         )
 
-        if result.returncode == 0:
-            return {
-                "status": "success",
-                "message": f"5-year portfolio simulation completed successfully",
-                "years_simulated": years,
-                "trading_days": years * 252,
-                "output": result.stdout[-500:] if result.stdout else ""  # Last 500 chars
-            }
-        else:
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=600)
+            
+            if proc.returncode == 0:
+                return {
+                    "status": "success",
+                    "message": f"5-year portfolio simulation completed successfully",
+                    "years_simulated": years,
+                    "trading_days": years * 252,
+                    "output": stdout.decode()[-500:] if stdout else ""  # Last 500 chars
+                }
+            else:
+                err_msg = stderr.decode() if stderr else "Unknown error"
+                logger.error(f"Simulation failed: {err_msg}")
+                return {
+                    "status": "error",
+                    "message": f"Simulation failed: {err_msg}",
+                    "error": err_msg
+                }
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            logger.error("Simulation timed out after 10 minutes")
             return {
                 "status": "error",
-                "message": f"Simulation failed: {result.stderr}",
-                "error": result.stderr
+                "message": "Simulation timed out after 10 minutes",
+                "error": "timeout"
             }
 
     except subprocess.TimeoutExpired:
@@ -444,6 +523,12 @@ async def get_portfolio_comparison(db: AsyncSession = Depends(get_db)):
             start_date = history[0].date.isoformat() if history else None
             end_date = history[-1].date.isoformat() if history else None
             
+            # Get actual holdings count
+            holdings_count_result = await db.execute(
+                select(func.count(PaperHolding.id)).where(PaperHolding.session_id == session_id)
+            )
+            holdings_count = holdings_count_result.scalar() or 0
+
             results.append({
                 "session_id": session_id,
                 "display_name": config["display_name"],
@@ -456,12 +541,13 @@ async def get_portfolio_comparison(db: AsyncSession = Depends(get_db)):
                 "trade_count": trade_count,
                 "start_date": start_date,
                 "end_date": end_date,
-                "holdings_count": len([]),  # Could add actual count
+                "holdings_count": holdings_count,
             })
-            
+                
         except Exception as e:
-            # Portfolio doesn't exist yet
-            pass
+            # Log unexpected errors but continue processing other portfolios
+            logger.error(f"Error processing portfolio {session_id}: {e}", exc_info=True)
+            continue
     
     # Sort by total return (best first)
     results.sort(key=lambda x: x["total_return"], reverse=True)

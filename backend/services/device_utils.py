@@ -46,13 +46,14 @@ def has_sufficient_gpu_memory(required_mb: int = 200) -> bool:
 
     try:
         torch.cuda.empty_cache()
-        props = torch.cuda.get_device_properties(0)
-        total_mem = props.total_memory
-        allocated_mem = torch.cuda.memory_allocated(0)
-        free_mem = total_mem - allocated_mem
-        free_mem_mb = free_mem / (1024 * 1024)
+        # Use mem_get_info for accurate free/total bytes from driver
+        free_bytes, total_bytes = torch.cuda.mem_get_info(0)
+        
+        # Convert to MB
+        free_mem_mb = free_bytes / (1024 * 1024)
+        total_mem_mb = total_bytes / (1024 * 1024)
 
-        logger.debug(f"GPU Memory: {free_mem_mb:.0f}MB free / {total_mem/(1024*1024):.0f}MB total")
+        logger.debug(f"GPU Memory: {free_mem_mb:.0f}MB free (calc) / {total_mem_mb:.0f}MB total")
 
         return free_mem_mb >= required_mb
     except Exception as e:
@@ -73,10 +74,18 @@ def get_device_info() -> dict:
     }
 
     if torch.cuda.is_available():
-        info["device_name"] = torch.cuda.get_device_name(0)
-        props = torch.cuda.get_device_properties(0)
-        info["total_memory_gb"] = props.total_memory / (1024**3)
-        info["allocated_memory_gb"] = torch.cuda.memory_allocated(0) / (1024**3)
-        info["free_memory_gb"] = (props.total_memory - torch.cuda.memory_allocated(0)) / (1024**3)
+        try:
+            info["device_name"] = torch.cuda.get_device_name(0)
+            props = torch.cuda.get_device_properties(0)
+            # Accurate free memory from driver
+            free_bytes, total_bytes = torch.cuda.mem_get_info(0)
+            
+            info["total_memory_gb"] = round(total_bytes / (1024**3), 2)
+            info["allocated_memory_gb"] = round(torch.cuda.memory_allocated(0) / (1024**3), 2)
+            info["reserved_memory_gb"] = round(torch.cuda.memory_reserved(0) / (1024**3), 2)
+            info["free_memory_gb"] = round(free_bytes / (1024**3), 2)
+        except Exception as e:
+            logger.error(f"Failed to query hardware GPU stats: {e}")
+            info["error"] = str(e)
 
     return info

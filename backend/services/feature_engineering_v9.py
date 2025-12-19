@@ -335,6 +335,7 @@ def process_stock_for_v9(
     ticker: str,
     spy_data: Optional[Dict[str, pd.Series]] = None,
     vix_data: Optional[pd.Series] = None,
+    drop_na_target: bool = True,
 ) -> pd.DataFrame:
     """
     Full V9 processing pipeline for a single stock.
@@ -344,6 +345,7 @@ def process_stock_for_v9(
         ticker: Stock ticker symbol
         spy_data: Processed SPY data dict
         vix_data: Processed VIX data series
+        drop_na_target: Whether to drop rows where future target is NaN (True for training, False for inference)
     
     Returns:
         DataFrame with all V9 features, future return, and metadata
@@ -367,6 +369,13 @@ def process_stock_for_v9(
     
     # Drop rows with NaN in features (warmup period)
     df = df.dropna(subset=V9_FEATURE_NAMES)
+    
+    # Drop rows with NaN in target ONLY if requested (usually for training)
+    if drop_na_target:
+        # Only drop columns that actually exist to avoid KeyError
+        cols_to_drop = [c for c in ['target_5d', 'target_rank'] if c in df.columns]
+        if cols_to_drop:
+            df = df.dropna(subset=cols_to_drop)
     
     return df
 

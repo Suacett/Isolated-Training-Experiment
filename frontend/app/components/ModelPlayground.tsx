@@ -54,15 +54,20 @@ export default function ModelPlayground({ onBack }: PlaygroundPageProps) {
         return "text-rose-400";
     };
 
+    const fetchLock = React.useRef(false);
+
     // Fetch initial status
     useEffect(() => {
-        fetchStatus();
-        fetchModels();
+        const controller = new AbortController();
+        fetchStatus(controller.signal);
+        fetchModels(controller.signal);
+        return () => controller.abort();
     }, []);
 
-    const fetchStatus = async () => {
+    const fetchStatus = async (signal?: AbortSignal) => {
         try {
-            const res = await fetch(getApiUrl("/settings/playground"));
+            const res = await fetch(getApiUrl("/settings/playground"), { signal });
+            if (!res.ok) throw new Error("Status API error");
             const data = await res.json();
             setIsEnabled(data.enabled);
             setLoaderStatus(data.loader_status);
@@ -71,16 +76,19 @@ export default function ModelPlayground({ onBack }: PlaygroundPageProps) {
                 // Fetch comparisons if enabled
                 fetchComparisons();
             }
-        } catch (e) {
-            setError("Failed to fetch playground status");
+        } catch (e: any) {
+            if (e.name !== 'AbortError') {
+                setError("Failed to fetch playground status");
+            }
         } finally {
             setIsLoading(false);
         }
     };
 
-    const fetchModels = async () => {
+    const fetchModels = async (signal?: AbortSignal) => {
         try {
-            const res = await fetch(getApiUrl("/models"));
+            const res = await fetch(getApiUrl("/models"), { signal });
+            if (!res.ok) throw new Error("Models API error");
             const data = await res.json();
             // Merge API models with hardcoded (use hardcoded if API is empty)
             const apiModels = data.models || [];
@@ -96,32 +104,41 @@ export default function ModelPlayground({ onBack }: PlaygroundPageProps) {
                 });
                 setModels(merged);
             }
-        } catch (e) {
-            console.error("Failed to fetch models, using hardcoded:", e);
-            setModels(HARDCODED_MODELS);
+        } catch (e: any) {
+            if (e.name !== 'AbortError') {
+                console.error("Failed to fetch models, using hardcoded:", e);
+                setModels(HARDCODED_MODELS);
+            }
         }
     };
 
-    const fetchComparisons = useCallback(async () => {
+    const fetchComparisons = useCallback(async (signal?: AbortSignal) => {
+        if (fetchLock.current) return;
+        fetchLock.current = true;
         setIsLoading(true);
         try {
-            const res = await fetch(getApiUrl(`/playground/compare_all?accuracy_days=${accuracyDays}`));
+            const res = await fetch(getApiUrl(`/playground/compare_all?accuracy_days=${accuracyDays}`), { signal });
             if (res.ok) {
                 const data = await res.json();
                 setComparisons(data.tickers || {});
 
-                // Auto-select first ticker
+                // Auto-select first ticker if none selected
                 const tickers = Object.keys(data.tickers || {});
-                if (tickers.length > 0 && !selectedTicker) {
-                    setSelectedTicker(tickers[0]);
+                if (tickers.length > 0) {
+                    setSelectedTicker(prev => prev || tickers[0]);
                 }
+            } else {
+                throw new Error("Compare API error");
             }
-        } catch (e) {
-            setError("Failed to fetch predictions");
+        } catch (e: any) {
+            if (e.name !== 'AbortError') {
+                setError("Failed to fetch predictions");
+            }
         } finally {
             setIsLoading(false);
+            fetchLock.current = false;
         }
-    }, [accuracyDays, selectedTicker]); // Added selectedTicker to dependencies for auto-selection logic
+    }, [accuracyDays]); // Removed selectedTicker dependency to prevent loop
 
     const togglePlayground = async () => {
         setIsToggling(true);
@@ -218,7 +235,7 @@ export default function ModelPlayground({ onBack }: PlaygroundPageProps) {
                         {/* Refresh Button */}
                         {isEnabled && (
                             <button
-                                onClick={fetchComparisons}
+                                onClick={() => fetchComparisons()}
                                 disabled={isLoading}
                                 className="p-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 transition-colors text-zinc-400 hover:text-white"
                             >

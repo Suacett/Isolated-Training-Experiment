@@ -17,24 +17,38 @@ export default function Navbar() {
     const [isLogsOpen, setIsLogsOpen] = useState(false);
 
     useEffect(() => {
+        const controller = new AbortController();
+
         // Fetch System Status
-        fetch(getApiUrl("/status"))
-            .then(res => res.json())
+        fetch(getApiUrl("/system/status"), { signal: controller.signal })
+            .then(res => {
+                if (!res.ok) throw new Error("Status fetch failed");
+                return res.json();
+            })
             .then(data => setStatus({
                 configured: data.configured,
                 model_loaded: data.ai_model_loaded
             }))
-            .catch(console.error);
+            .catch(err => {
+                if (err.name !== "AbortError") console.error("Status fetch error:", err);
+            });
 
         // Fetch Live Equity
-        fetch(getApiUrl("/paper/status"))
-            .then(res => res.json())
+        fetch(getApiUrl("/paper/status"), { signal: controller.signal })
+            .then(res => {
+                if (!res.ok) throw new Error("Equity fetch failed");
+                return res.json();
+            })
             .then(data => {
-                if (data && data.total_value) {
+                if (data && data.total_value !== undefined) {
                     setEquity(data.total_value);
                 }
             })
-            .catch(console.error);
+            .catch(err => {
+                if (err.name !== "AbortError") console.error("Equity fetch error:", err);
+            });
+
+        return () => controller.abort();
     }, []);
 
     const isActive = (path: string) => pathname === path;

@@ -13,7 +13,8 @@
 - **Database:** PostgreSQL with TimescaleDB extension (running in Docker).
 - **Data Sources:**
   - Yahoo Finance (Primary) - Free, no API key required
-  - Alpha Vantage (EPS/Intrinsic Value for favorites only)
+  - Alpha Vantage (Fallback for Price/Fundamentals) - Key required
+  - Alpaca Markets (Trading/Execution Only)
 - **Secrets:** API Keys stored in `backend/secrets.json` via frontend modal. NEVER commit keys.
 
 ## 3. UI/UX Guidelines (Minimalist Dark Design System)
@@ -50,8 +51,10 @@
 - **predictions.py**: Prediction history and stats
 - **backtest.py**: Historical prediction generation
 - **forecasts.py**: Multi-horizon AI forecasts
-- **backtest_v9_portfolio.py**: V9 Portfolio simulation (Top-K Ranking)
+- **seed_multi_portfolio.py**: Laboratory data generator (9 scenarios, 20-year backtest)
 - **playground.py**: Model Playground for comparing multiple models
+- **paper.py**: Paper trading status and history
+- **stress-test/page.tsx**: Laboratory UI for strategy comparison
 
 ### Services (`backend/services/`)
 - **data_ingest.py**: Yahoo Finance client (primary data source)
@@ -101,9 +104,11 @@ docker compose restart backend
 | `train_model_v7.py` | v7 | Attention + BiLSTM, 41 features, DirectionalLoss |
 | `train_model_v8_class.py` | v8-class | **LEGACY** - Classification (BCELoss), non-overlapping windows |
 | `train_model_v6.py` | v6 | Standard LSTM, 128 hidden, 37 features |
-| `backtest_v9_portfolio.py` | - | **NEW** - Backtests Top-10 Ranking Strategy |
+| `seed_multi_portfolio.py` | - | **LABORATORY** - populates 9+ stress-test scenarios (2005-2024) |
+| `backtest_v9_portfolio.py` | - | Generic backtest for Top-K Ranking Strategy with dates |
 | `fetch_training_data.py` | - | Fetches 59 tickers (indices, sectors, top stocks) |
 | `fetch_sp500_full.py` | - | **NEW** - Fetches full S&P 500 (500+ tickers) dynamically |
+| `seed_paper_history.py` | - | **NEW** - Generates 1 year of random history for dashboard testing |
 | `audit_v7.py` | - | Detects "lazy prediction" (memorization) in V6/V7 |
 | `sanity_check_v8.py` | - | Pre-training validation for V8 |
 | `calibrate_v8.py` | - | Find optimal buy threshold for V8 |
@@ -112,7 +117,7 @@ docker compose restart backend
 
 | Model | SPY | AAPL | AMD | Bias | Notes |
 |-------|-----|------|-----|------|-------|
-| **v7 (Attention)** | 52.6% | TBD | TBD | -23.7% (Bearish) | **NEW** - BiLSTM + Attention |
+| **v7 (Attention)** | 52.6% | TBD | TBD | -23.7% (Bearish) | **NEW** - Superior architecture (BiLSTM+Attention) despite bearish bias. |
 | v6 (Clean Data) | 54.0% | 51.1% | 50.1% | +8% (Bullish) | Baseline |
 
 ### Risk Management Standards
@@ -147,7 +152,10 @@ docker compose restart backend
 ## 8. Quick Commands
 
 ```bash
-# Start all services
+# COMPLETE ONE-LINE SETUP (Proxmox Host)
+bash -c "$(wget -qO- https://raw.githubusercontent.com/Suacett/Isolated-Training-Experiment/main/proxmox-install.sh)"
+
+# Start all services (Inside Container)
 docker compose up -d
 
 # View logs

@@ -1,7 +1,7 @@
 import os
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker, declarative_base
-from sqlalchemy import Column, String, Float, DateTime, select, desc, Integer, delete, Boolean
+from sqlalchemy import Column, String, Float, DateTime, select, desc, Integer, delete, Boolean, UniqueConstraint
 from sqlalchemy.dialects.postgresql import insert
 from datetime import datetime
 from config.settings import DATABASE_URL, PAPER_SESSION_ID
@@ -102,7 +102,10 @@ class PaperPortfolioHistory(Base):
 
 class PaperHolding(Base):
     __tablename__ = "paper_holdings"
-    __table_args__ = {'extend_existing': True}
+    __table_args__ = (
+        UniqueConstraint('session_id', 'ticker', name='uq_holding_session_ticker'),
+        {'extend_existing': True}
+    )
     
     id = Column(Integer, primary_key=True, autoincrement=True)
     session_id = Column(String, nullable=False)
@@ -398,8 +401,58 @@ async def delete_stock_data(ticker: str):
         await session.execute(delete(SentimentData).where(SentimentData.ticker == ticker))
         await session.commit()
 
+async def bulk_upsert_stock_prices(session, stock_prices: list[dict]):
+    """
+    Unified bulk upsert for stock prices to avoid code redundancy.
+    Handles PostgreSQL's parameter limit (32767) by batching.
+    """
+    if not stock_prices:
+        return
+        
+    BATCH_SIZE = 1000  # 1000 rows * 7 columns = 7000 parameters (well under limit)
+    
+    for i in range(0, len(stock_prices), BATCH_SIZE):
+        batch = stock_prices[i:i + BATCH_SIZE]
+        stmt = insert(StockPrice).values(batch)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[StockPrice.ticker, StockPrice.timestamp],
+            set_={
+                "open": stmt.excluded.open,
+                "high": stmt.excluded.high,
+                "low": stmt.excluded.low,
+                "close": stmt.excluded.close,
+                "volume": stmt.excluded.volume
+            }
+        )
+        await session.execute(stmt)
+    await session.commit()
+
 async def init_db():
     """Initialize database tables"""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+
+async def atomic_update_highest_price(session_id: str, ticker: str, new_price: float):
+    """
+    Atomically update highest_price using GREATEST() to prevent race conditions.
+    
+    This ensures that even if two processes try to update at the same time,
+    the highest value always wins (Phase 1.1 fix).
+    """
+    from sqlalchemy import text
+    
+    async with AsyncSessionLocal() as session:
+        await session.execute(
+            text("""
+                UPDATE paper_holdings 
+                SET highest_price = GREATEST(highest_price, :new_price),
+                    current_price = :new_price,
+                    updated_at = NOW()
+                WHERE session_id = :session_id AND ticker = :ticker
+            """),
+            {"session_id": session_id, "ticker": ticker, "new_price": new_price}
+        )
+        await session.commit()
+
 

@@ -258,7 +258,7 @@ class SentimentDataCollector:
         """
         Fetch sentiment for multiple tickers efficiently.
 
-        With key pool (5 keys), completes ~5x faster than single key.
+        With key pool (5 keys), rotational usage avoids rate limits, but execution remains sequential.
 
         Args:
             tickers: List of ticker symbols

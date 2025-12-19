@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { getApiUrl } from "@/config/api";
 import {
     Brain,
@@ -140,40 +140,77 @@ export default function PortfolioComparison({ onBack }: PortfolioComparisonProps
     const [rerunning, setRerunning] = useState(false);
     const [rerunLogs, setRerunLogs] = useState<string[]>([]);
     const [crashSectionOpen, setCrashSectionOpen] = useState(false);
+    const [fetchError, setFetchError] = useState<string | null>(null);
+
+    // Request tracking
+    const abortControllerRef = useRef<AbortController | null>(null);
+    const historyAbortControllers = useRef<Record<string, AbortController>>({});
+    const inFlightHistory = useRef<Set<string>>(new Set());
 
     useEffect(() => {
         fetchPortfolios();
     }, []);
 
     const fetchPortfolios = async () => {
+        // Abort previous request if in flight
+        if (abortControllerRef.current) {
+            abortControllerRef.current.abort();
+        }
+        const controller = new AbortController();
+        abortControllerRef.current = controller;
+
         setLoading(true);
+        setFetchError(null);
         try {
-            const res = await fetch(getApiUrl("/paper/portfolios/compare"));
+            const res = await fetch(getApiUrl("/paper/portfolios/compare"), {
+                signal: controller.signal
+            });
             if (res.ok) {
                 const data = await res.json();
                 setPortfolios(data.portfolios || []);
                 setAvailableConfigs(data.available_configs || []);
+            } else {
+                setFetchError(`Request failed with status ${res.status}`);
             }
-        } catch (e) {
-            console.error("Failed to fetch portfolios:", e);
+        } catch (e: any) {
+            if (e.name !== 'AbortError') {
+                console.error("Failed to fetch portfolios:", e);
+                setFetchError("Connection error. Check backend status.");
+            }
         } finally {
-            setLoading(false);
+            if (abortControllerRef.current === controller) {
+                setLoading(false);
+            }
         }
     };
 
     const fetchHistory = async (sessionId: string) => {
-        if (historyData[sessionId]) return;
+        // Prevent duplicate in-flight requests for the same session
+        if (historyData[sessionId] || inFlightHistory.current.has(sessionId)) return;
+
+        // Abort previous history request for THIS session if any
+        if (historyAbortControllers.current[sessionId]) {
+            historyAbortControllers.current[sessionId].abort();
+        }
+        const controller = new AbortController();
+        historyAbortControllers.current[sessionId] = controller;
+        inFlightHistory.current.add(sessionId);
 
         setLoadingHistory(sessionId);
         try {
-            const res = await fetch(getApiUrl(`/paper/portfolios/${sessionId}/history`));
+            const res = await fetch(getApiUrl(`/paper/portfolios/${sessionId}/history`), {
+                signal: controller.signal
+            });
             if (res.ok) {
                 const data = await res.json();
                 setHistoryData(prev => ({ ...prev, [sessionId]: data }));
             }
-        } catch (e) {
-            console.error(`Failed to fetch history for ${sessionId}:`, e);
+        } catch (e: any) {
+            if (e.name !== 'AbortError') {
+                console.error(`Failed to fetch history for ${sessionId}:`, e);
+            }
         } finally {
+            inFlightHistory.current.delete(sessionId);
             setLoadingHistory(null);
         }
     };
@@ -200,15 +237,20 @@ export default function PortfolioComparison({ onBack }: PortfolioComparisonProps
 
     const handleRerunSimulations = async () => {
         setRerunning(true);
-        setRerunLogs(["🚀 Starting simulations...", ""]);
-        setRerunLogs(prev => [...prev, "Run this command in your terminal:"]);
-        setRerunLogs(prev => [...prev, ""]);
-        setRerunLogs(prev => [...prev, "docker exec proxmox_stock_backend python -m scripts.seed_multi_portfolio --all"]);
-        setRerunLogs(prev => [...prev, ""]);
-        setRerunLogs(prev => [...prev, "⏱️ This will take approximately 10-15 minutes."]);
-        setRerunLogs(prev => [...prev, "📊 Each portfolio simulation runs ~1250 trading days."]);
-        setRerunLogs(prev => [...prev, ""]);
-        setRerunLogs(prev => [...prev, "When complete, click 'Refresh' to see results."]);
+        // Batch updates into a single array
+        const logs = [
+            "🚀 Starting simulations...",
+            "",
+            "Run this command in your terminal:",
+            "",
+            "docker exec proxmox_stock_backend python -m scripts.seed_multi_portfolio --all",
+            "",
+            "⏱️ This will take approximately 10-15 minutes.",
+            "📊 Each portfolio simulation runs ~1250 trading days.",
+            "",
+            "When complete, click 'Refresh' to see results."
+        ];
+        setRerunLogs(logs);
         setRerunning(false);
     };
 
@@ -267,7 +309,9 @@ export default function PortfolioComparison({ onBack }: PortfolioComparisonProps
     };
 
     const formatDate = (dateStr: string) => {
+        if (!dateStr) return "N/A";
         const d = new Date(dateStr);
+        if (isNaN(d.getTime())) return "Invalid Date";
         return `${d.getMonth() + 1}/${d.getFullYear().toString().slice(-2)}`;
     };
 
@@ -511,6 +555,18 @@ export default function PortfolioComparison({ onBack }: PortfolioComparisonProps
                     <div className="flex items-center justify-center py-20">
                         <RefreshCw className="animate-spin text-amber-400" size={32} />
                     </div>
+                ) : fetchError ? (
+                    <div className="bg-rose-900/20 border border-rose-800 p-12 text-center rounded-2xl">
+                        <AlertTriangle className="mx-auto text-rose-400 mb-4" size={48} />
+                        <h3 className="text-xl font-bold text-white mb-2">Failed to Load Data</h3>
+                        <p className="text-zinc-400 mb-6">{fetchError}</p>
+                        <button
+                            onClick={fetchPortfolios}
+                            className="px-6 py-2 bg-rose-600 hover:bg-rose-500 rounded-lg text-white font-semibold"
+                        >
+                            Try Again
+                        </button>
+                    </div>
                 ) : portfolios.length === 0 ? (
                     <div className="bg-zinc-900/50 rounded-2xl border border-zinc-800 p-12 text-center">
                         <AlertTriangle className="mx-auto text-amber-400 mb-4" size={48} />
@@ -577,6 +633,14 @@ export default function PortfolioComparison({ onBack }: PortfolioComparisonProps
                                 <div
                                     className="p-6 cursor-pointer"
                                     onClick={() => handlePortfolioClick(portfolio.session_id)}
+                                    role="button"
+                                    tabIndex={0}
+                                    onKeyDown={(e) => {
+                                        if (e.key === "Enter" || e.key === " ") {
+                                            e.preventDefault();
+                                            handlePortfolioClick(portfolio.session_id);
+                                        }
+                                    }}
                                 >
                                     <div className="flex items-center justify-between">
                                         <div className="flex items-center gap-3">

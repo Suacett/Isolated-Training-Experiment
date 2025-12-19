@@ -63,7 +63,7 @@ CONFIG = {
     "LEARNING_RATE": float(os.getenv("LEARNING_RATE", "0.0001")),  # Lower LR for attention
     "DIRECTION_WEIGHT": float(os.getenv("DIRECTION_WEIGHT", "0.5")),
     "TRAIN_CUTOFF": 0.80,
-    "USE_CPU_OFFLOAD": bool(os.getenv("USE_CPU_OFFLOAD", "1")),
+    "USE_CPU_OFFLOAD": os.getenv("USE_CPU_OFFLOAD", "1").lower() in ("1", "true", "yes"),
     "GRADIENT_CLIP_NORM": float(os.getenv("GRADIENT_CLIP_NORM", "1.0")),
 }
 
@@ -96,8 +96,8 @@ class DirectionalLoss(nn.Module):
         
         # Direction penalty: 1 if signs don't match, 0 if they do
         # Focus on 1-day prediction (index 0)
-        pred_sign = torch.sign(pred[:, 0])
-        target_sign = torch.sign(target[:, 0])
+        pred_sign = torch.where(pred[:, 0] >= 0, torch.ones_like(pred[:, 0]), -torch.ones_like(pred[:, 0]))
+        target_sign = torch.where(target[:, 0] >= 0, torch.ones_like(target[:, 0]), -torch.ones_like(target[:, 0]))
         direction_wrong = (pred_sign != target_sign).float()
         
         # Volatility weighting: penalize more on high-movement days
@@ -185,42 +185,71 @@ class ConfusionTracker:
 
 
 def get_db_url():
-    url = os.getenv("DATABASE_URL", "")
+    url = os.getenv("DATABASE_URL")
+    if not url:
+        raise ValueError("DATABASE_URL environment variable must be set")
     return url.replace("postgresql+asyncpg://", "postgresql://")
 
 
 def get_ticker_list():
+    """Get list of available tickers from DB."""
     import psycopg2
-    conn = psycopg2.connect(get_db_url())
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT ticker, COUNT(*) as count 
-        FROM stock_prices GROUP BY ticker 
-        HAVING COUNT(*) >= %s ORDER BY count DESC LIMIT %s
-    """, (CONFIG["MIN_RECORDS"], CONFIG["MAX_STOCKS"]))
-    results = cur.fetchall()
-    cur.close()
-    conn.close()
-    return [(row[0], row[1]) for row in results]
+    try:
+        with psycopg2.connect(get_db_url()) as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT ticker, COUNT(*) as count 
+                    FROM stock_prices GROUP BY ticker 
+                    HAVING COUNT(*) >= %s ORDER BY count DESC LIMIT %s
+                """, (CONFIG["MIN_RECORDS"], CONFIG["MAX_STOCKS"]))
+
+ def get_ticker_list():
+     import psycopg2
+-    conn = psycopg2.connect(get_db_url())
+-    cur = conn.cursor()
+-    cur.execute("""
+-        SELECT ticker, COUNT(*) as count 
+-        FROM stock_prices GROUP BY ticker 
+-        HAVING COUNT(*) >= %s ORDER BY count DESC LIMIT %s
+-    """, (CONFIG["MIN_RECORDS"], CONFIG["MAX_STOCKS"]))
+-    results = cur.fetchall()
+-    cur.close()
+-    conn.close()
+-    return [(row[0], row[1]) for row in results]
++    with psycopg2.connect(get_db_url()) as conn:
++        with conn.cursor() as cur:
++            cur.execute("""
++                SELECT ticker, COUNT(*) as count 
++                FROM stock_prices GROUP BY ticker 
++                HAVING COUNT(*) >= %s ORDER BY count DESC LIMIT %s
++            """, (CONFIG["MIN_RECORDS"], CONFIG["MAX_STOCKS"]))
++            results = cur.fetchall()
++    return [(row[0], row[1]) for row in results]                results = cur.fetchall()
+        return [(row[0], row[1]) for row in results]
+    except Exception as e:
+        logger.error(f"Failed to get ticker list: {e}")
+        return []
 
 
 def load_single_stock(ticker: str):
+    """Load stock data from DB."""
     import psycopg2
-    conn = psycopg2.connect(get_db_url())
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT timestamp, open, high, low, close, volume 
-        FROM stock_prices WHERE ticker = %s ORDER BY timestamp
-    """, (ticker,))
-    records = cur.fetchall()
-    cur.close()
-    conn.close()
-    
-    if len(records) > CONFIG["MAX_RECORDS_PER_STOCK"]:
-        records = records[-CONFIG["MAX_RECORDS_PER_STOCK"]:]
-    
-    if records:
-        return pd.DataFrame(records, columns=['date', 'open', 'high', 'low', 'close', 'volume'])
+    try:
+        with psycopg2.connect(get_db_url()) as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT timestamp, open, high, low, close, volume 
+                    FROM stock_prices WHERE ticker = %s ORDER BY timestamp
+                """, (ticker,))
+                records = cur.fetchall()
+        
+        if len(records) > CONFIG["MAX_RECORDS_PER_STOCK"]:
+            records = records[-CONFIG["MAX_RECORDS_PER_STOCK"]:]
+        
+        if records:
+            return pd.DataFrame(records, columns=['date', 'open', 'high', 'low', 'close', 'volume'])
+    except Exception as e:
+        logger.error(f"Failed to load data for {ticker}: {e}")
     return None
 
 
@@ -524,8 +553,15 @@ def train_pipeline():
     _flush_to_memmap(val_X_chunks, val_y_chunks, None, "val", n_features)
     gc.collect()
     
-    train_info = np.load(TEMP_DATA_DIR / "train_info.npy")
-    val_info = np.load(TEMP_DATA_DIR / "val_info.npy")
+    train_info_path = TEMP_DATA_DIR / "train_info.npy"
+    val_info_path = TEMP_DATA_DIR / "val_info.npy"
+    if not train_info_path.exists() or not val_info_path.exists():
+        logger.error("No training data was generated. Check stock processing logs.")
+        shutil.rmtree(TEMP_DATA_DIR)
+        sys.exit(1)
+        
+    train_info = np.load(train_info_path)
+    val_info = np.load(val_info_path)
     n_train, n_val = int(train_info[0]), int(val_info[0])
     
     logger.info(f"Training samples: {n_train}, Validation samples: {n_val}")
@@ -594,8 +630,11 @@ def train_pipeline():
         volatility_boost=2.0
     )
     
-    grad_scaler = GradScaler('cuda')
-    device = model.device
+    device = torch.device('cuda' if use_cuda else 'cpu')
+    # Define use_amp for mixed precision training if available
+    use_amp = use_cuda  
+    grad_scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+    model.to(device)
     
     confusion_tracker = ConfusionTracker()
     
@@ -611,7 +650,7 @@ def train_pipeline():
         for batch_idx, (X, y, _) in enumerate(train_loader):
             X, y = X.to(device), y.to(device)
             
-            with autocast('cuda'):
+            with torch.cuda.amp.autocast(enabled=use_cuda):
                 out = model(X)
                 loss = criterion(out, y) / CONFIG["ACCUMULATION_STEPS"]
             
@@ -638,7 +677,11 @@ def train_pipeline():
         with torch.no_grad():
             for X, y in val_loader:
                 X, y = X.to(device), y.to(device)
-                with autocast('cuda'):
+                if use_amp:
+                    with autocast('cuda'):
+                        out = model(X)
+                        loss = criterion(out, y)
+                else:
                     out = model(X)
                     loss = criterion(out, y)
                 val_loss += loss.item()

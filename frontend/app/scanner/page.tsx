@@ -42,18 +42,23 @@ export default function ScannerPage() {
     // AI Prediction Panel
     const [isAIPanelOpen, setIsAIPanelOpen] = useState(false);
 
-    // Prevent duplicate initial fetch
+    // Prevent concurrent fetches and duplicate initial fetch
+    const isLoadingRef = useRef(false);
     const hasFetchedRef = useRef(false);
 
     // Helper to detect crypto tickers
     const isCryptoTicker = (ticker: string): boolean => {
-        return ticker.includes("/") || ["BTC", "ETH", "LTC", "SOL", "DOGE"].some(c => ticker.includes(c));
+        if (ticker.includes("/")) return true;
+        const CRYPTO_TOKENS = new Set(["BTC", "ETH", "LTC", "SOL", "DOGE", "LINK", "DOT", "MATIC", "UNI", "BCH"]);
+        const tokens = ticker.toUpperCase().split(/[^A-Z0-9]/).filter(Boolean);
+        return tokens.some(t => CRYPTO_TOKENS.has(t));
     };
 
     // Fetch dashboard data from API
     const fetchDashboard = useCallback(async () => {
-        if (isLoading) return; // Prevent concurrent fetches
+        if (isLoadingRef.current) return; // Prevent concurrent fetches
 
+        isLoadingRef.current = true;
         setIsLoading(true);
         try {
             const res = await fetch(getApiUrl('/dashboard'));
@@ -69,10 +74,10 @@ export default function ScannerPage() {
                 price: item.current_price || 0,
                 prediction: item.prediction || 0,
                 intrinsic: item.intrinsic_value || 0,
-                accuracy: item.accuracy ?? (item.prediction > item.current_price),
+                accuracy: item.accuracy ?? false,
                 isCrypto: isCryptoTicker(item.ticker),
                 source: item.source,
-                isFavorite: item.is_favorite !== false,
+                isFavorite: item.is_favorite ?? false,
             }));
 
             // Sort: Favorites first, then alphabetical
@@ -87,6 +92,7 @@ export default function ScannerPage() {
         } catch (err) {
             console.error("Failed to fetch dashboard:", err);
         } finally {
+            isLoadingRef.current = false;
             setIsLoading(false);
         }
     }, []); // No dependencies

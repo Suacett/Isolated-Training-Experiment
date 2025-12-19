@@ -13,6 +13,7 @@ Free tier limits:
 import os
 import time
 import logging
+import threading
 from typing import List, Optional
 from dataclasses import dataclass
 
@@ -43,6 +44,7 @@ class AlphaVantageKeyPool:
         """Initialize the key pool from environment variables."""
         self.keys: List[APIKey] = []
         self.current_index = 0
+        self.lock = threading.Lock()
         self._load_keys()
 
     def _load_keys(self):
@@ -90,21 +92,22 @@ class AlphaVantageKeyPool:
         max_attempts = len(self.keys) * 3
 
         while attempts < max_attempts:
-            # Try each key in round-robin order
-            for _ in range(len(self.keys)):
-                key = self.keys[self.current_index]
-                self.current_index = (self.current_index + 1) % len(self.keys)
-
-                # Reset counter if minute has passed (60 seconds)
-                if now - key.last_used > 60:
-                    key.calls_in_minute = 0
-
-                # Check if key is available (< 5 calls in last minute)
-                if key.calls_in_minute < 5:
-                    # Increment counter and update time
-                    key.calls_in_minute += 1
-                    key.last_used = now
-                    return key.key
+            with self.lock:
+                # Try each key in round-robin order
+                for _ in range(len(self.keys)):
+                    key = self.keys[self.current_index]
+                    self.current_index = (self.current_index + 1) % len(self.keys)
+    
+                    # Reset counter if minute has passed (60 seconds)
+                    if now - key.last_used > 60:
+                        key.calls_in_minute = 0
+    
+                    # Check if key is available (< 5 calls in last minute)
+                    if key.calls_in_minute < 5:
+                        # Increment counter and update time
+                        key.calls_in_minute += 1
+                        key.last_used = now
+                        return key.key
 
             attempts += 1
 
@@ -122,15 +125,12 @@ class AlphaVantageKeyPool:
         return None
 
     def reset_stats(self):
-        """Reset all key usage statistics.
-
-        Useful for manual testing or when you want to force a fresh start.
-        Call this after making bulk API calls to clear the rate limiting state.
-        """
-        for key in self.keys:
-            key.calls_in_minute = 0
-            key.last_used = 0.0
-        logger.info(f"🔄 Reset usage stats for {len(self.keys)} Alpha Vantage keys")
+        """Reset all key usage statistics."""
+        with self.lock:
+            for key in self.keys:
+                key.calls_in_minute = 0
+                key.last_used = 0.0
+            logger.info(f"🔄 Reset usage stats for {len(self.keys)} Alpha Vantage keys")
 
     def get_status(self) -> dict:
         """Get current pool status and statistics.
@@ -150,7 +150,7 @@ class AlphaVantageKeyPool:
 
             key_stats.append({
                 "index": idx,
-                "key_preview": f"{key.key[:10]}...{key.key[-4:]}",
+                "key_preview": f"{key.key[:4]}...{key.key[-4:]}" if len(key.key) > 12 else "***",
                 "calls_this_minute": calls_this_minute,
                 "available": calls_this_minute < 5,
                 "last_used_seconds_ago": round(now - key.last_used, 1)

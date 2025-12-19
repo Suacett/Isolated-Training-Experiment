@@ -193,41 +193,44 @@ def get_db_url():
 def get_top_tickers(n: int = 50) -> List[str]:
     """Get top N most liquid tickers."""
     import psycopg2
-    conn = psycopg2.connect(get_db_url())
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT ticker, COUNT(*) as count 
-        FROM stock_prices 
-        GROUP BY ticker 
-        HAVING COUNT(*) >= 500 
-        ORDER BY count DESC 
-        LIMIT %s
-    """, (n,))
-    results = [row[0] for row in cur.fetchall()]
-    cur.close()
-    conn.close()
-    return results
+    try:
+        with psycopg2.connect(get_db_url()) as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT ticker, COUNT(*) as count 
+                    FROM stock_prices 
+                    GROUP BY ticker 
+                    HAVING COUNT(*) >= 500 
+                    ORDER BY count DESC 
+                    LIMIT %s
+                """, (n,))
+                results = [row[0] for row in cur.fetchall()]
+                return results
+    except Exception as e:
+        logger.error(f"Error fetching top tickers: {e}")
+        return []
 
 
 def load_stock_data(ticker: str) -> Optional[pd.DataFrame]:
     """Load full OHLCV history for a ticker."""
     import psycopg2
-    conn = psycopg2.connect(get_db_url())
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT timestamp, open, high, low, close, volume 
-        FROM stock_prices 
-        WHERE ticker = %s 
-        ORDER BY timestamp
-    """, (ticker,))
-    records = cur.fetchall()
-    cur.close()
-    conn.close()
-    
-    if records:
-        df = pd.DataFrame(records, columns=['date', 'open', 'high', 'low', 'close', 'volume'])
-        df['date'] = pd.to_datetime(df['date'])
-        return df
+    try:
+        with psycopg2.connect(get_db_url()) as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT timestamp, open, high, low, close, volume 
+                    FROM stock_prices 
+                    WHERE ticker = %s 
+                    ORDER BY timestamp
+                """, (ticker,))
+                records = cur.fetchall()
+                
+                if records:
+                    df = pd.DataFrame(records, columns=['date', 'open', 'high', 'low', 'close', 'volume'])
+                    df['date'] = pd.to_datetime(df['date'])
+                    return df
+    except Exception as e:
+        logger.error(f"Error loading stock data for {ticker}: {e}")
     return None
 
 
@@ -248,7 +251,8 @@ def prepare_stock_features(df: pd.DataFrame, feature_cols: list, scaler: Standar
     """
     try:
         processed = process_stock_data(df.copy(), create_targets=True)
-    except:
+    except Exception as e:
+        logger.error(f"Error preparing features for stock: {e}", exc_info=True)
         return None, None
     
     # Calculate SMA 200 for trend filter
@@ -300,6 +304,10 @@ def run_backtest(
     logger.info(f"Model loaded on {device}")
     
     # Load scaler
+    if not SCALER_PATH.exists():
+        logger.error(f"Scaler not found at {SCALER_PATH}")
+        return
+
     with open(SCALER_PATH, 'rb') as f:
         scaler_data = pickle.load(f)
         scaler = scaler_data['scaler']

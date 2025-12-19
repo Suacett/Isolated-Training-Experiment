@@ -8,7 +8,7 @@
 # predictor inside it automatically.
 #
 # Usage (run on Proxmox host):
-#   bash -c "$(wget -qO- https://raw.githubusercontent.com/Suacett/Isolated-Training-Experiment/MAIN-BRANCH/proxmox-install.sh)"
+#   bash -c "$(wget -qO- https://raw.githubusercontent.com/Suacett/Isolated-Training-Experiment/main/proxmox-install.sh)"
 #
 # ============================================================================
 
@@ -96,6 +96,11 @@ if [ "$PASSWORD" != "$PASSWORD2" ]; then
     exit 1
 fi
 
+# Optional Alpha Vantage Key
+echo ""
+read -p "Optional: Enter Alpha Vantage API Key (for intrinsic value): " AV_KEY
+echo ""
+
 # Check if template exists, download if not
 TEMPLATE="$TEMPLATE_STORAGE:vztmpl/ubuntu-22.04-standard_22.04-1_amd64.tar.zst"
 if ! pveam list $TEMPLATE_STORAGE 2>/dev/null | grep -q "ubuntu-22.04-standard"; then
@@ -123,9 +128,14 @@ msg_ok "Container created successfully"
 if lspci | grep -i nvidia &> /dev/null; then
     msg_info "NVIDIA GPU detected. Configuring GPU passthrough..."
     
+    # Detect NVIDIA major numbers
+    NVIDIA_MAJOR=$(ls -l /dev/nvidia0 | awk '{print $5}' | cut -d, -f1)
+    UVM_MAJOR=$(ls -l /dev/nvidia-uvm | awk '{print $5}' | cut -d, -f1)
+    
     # Add GPU device mappings to container config
-    echo "lxc.cgroup2.devices.allow: c 195:* rwm" >> /etc/pve/lxc/${CTID}.conf
-    echo "lxc.cgroup2.devices.allow: c 509:* rwm" >> /etc/pve/lxc/${CTID}.conf
+    [ -n "$NVIDIA_MAJOR" ] && echo "lxc.cgroup2.devices.allow: c $NVIDIA_MAJOR:* rwm" >> /etc/pve/lxc/${CTID}.conf
+    [ -n "$UVM_MAJOR" ] && echo "lxc.cgroup2.devices.allow: c $UVM_MAJOR:* rwm" >> /etc/pve/lxc/${CTID}.conf
+    
     echo "lxc.mount.entry: /dev/nvidia0 dev/nvidia0 none bind,optional,create=file" >> /etc/pve/lxc/${CTID}.conf
     echo "lxc.mount.entry: /dev/nvidiactl dev/nvidiactl none bind,optional,create=file" >> /etc/pve/lxc/${CTID}.conf
     echo "lxc.mount.entry: /dev/nvidia-uvm dev/nvidia-uvm none bind,optional,create=file" >> /etc/pve/lxc/${CTID}.conf
@@ -145,7 +155,7 @@ sleep 10
 
 # Install stock predictor inside container
 msg_info "Installing Stock Predictor inside container..."
-pct exec $CTID -- bash -c "wget -qO- https://raw.githubusercontent.com/Suacett/Isolated-Training-Experiment/main/install.sh | bash"
+pct exec $CTID -- bash -c "NON_INTERACTIVE=true AV_KEY='$AV_KEY' wget -qO- https://raw.githubusercontent.com/Suacett/Isolated-Training-Experiment/main/install.sh | bash"
 
 # Get container IP
 CTIP=$(pct exec $CTID -- hostname -I | awk '{print $1}')

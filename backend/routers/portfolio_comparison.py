@@ -12,6 +12,7 @@ Endpoints:
 """
 
 import logging
+import asyncio
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 import numpy as np
@@ -57,6 +58,11 @@ def calculate_max_drawdown(equity_values: List[float]) -> float:
         return 0.0
 
     equity_array = np.array(equity_values, dtype=float)
+    
+    # Protect against zero or negative values
+    if np.any(equity_array <= 0):
+        return 0.0
+        
     running_max = np.maximum.accumulate(equity_array)
     drawdown = (equity_array - running_max) / running_max
     return float(np.min(drawdown) * 100)  # Convert to percentage
@@ -68,19 +74,38 @@ def calculate_sharpe_ratio(equity_values: List[float], risk_free_rate: float = 0
         return 0.0
 
     equity_array = np.array(equity_values, dtype=float)
-    returns = np.diff(equity_array) / equity_array[:-1]
+    
+    # Filter out entries where previous equity is zero to avoid division by zero
+    # and compute returns only for valid transitions.
+    valid_mask = equity_array[:-1] > 0
+    if not np.any(valid_mask):
+        return 0.0
+        
+    valid_previous = equity_array[:-1][valid_mask]
+    valid_current = equity_array[1:][valid_mask]
+    
+    returns = (valid_current - valid_previous) / valid_previous
 
-    if len(returns) == 0:
+    if len(returns) < 2:
         return 0.0
 
-    mean_return = np.mean(returns) * 252  # Annualize
-    std_return = np.std(returns) * np.sqrt(252)  # Annualize
+    # Annualize mean and volatility
+    mean_return = np.mean(returns) * 252
+    # Use sample standard deviation (ddof=1)
+    std_return = np.std(returns, ddof=1) * np.sqrt(252)
 
     if std_return == 0:
         return 0.0
 
     sharpe = (mean_return - risk_free_rate) / std_return
     return float(sharpe)
+
+
+# Helper function to fetch data using a dedicated session
+async def fetch_session_data(session_id: str) -> Optional[Dict[str, Any]]:
+    """Helper to fetch data with its own DB session to avoid concurrency issues."""
+    async with AsyncSessionLocal() as db:
+        return await get_portfolio_data(session_id, db)
 
 
 async def get_portfolio_data(session_id: str, db: AsyncSession) -> Optional[Dict[str, Any]]:
@@ -110,10 +135,11 @@ async def get_portfolio_data(session_id: str, db: AsyncSession) -> Optional[Dict
         equity_values = [h.total_value for h in history]
         dates = [h.date.isoformat() for h in history]
 
-        # Calculate metrics
-        initial_value = 10000.0
+        # Get actual initial value from history or fall back to DB default
+        initial_value = history[0].total_value if history else 10000.0
         final_value = portfolio.total_value
-        total_return = ((final_value - initial_value) / initial_value) * 100
+        
+        total_return = ((final_value - initial_value) / initial_value) * 100 if initial_value > 0 else 0.0
         max_drawdown = calculate_max_drawdown(equity_values)
         sharpe_ratio = calculate_sharpe_ratio(equity_values)
 
@@ -151,11 +177,13 @@ async def get_portfolio_comparison(db: AsyncSession = Depends(get_db)):
     try:
         portfolios = []
 
-        # Fetch data for all sessions in parallel
-        for session_id in PORTFOLIO_SESSIONS.keys():
-            portfolio_data = await get_portfolio_data(session_id, db)
-            if portfolio_data:
-                portfolios.append(portfolio_data)
+        # Fetch data for all sessions in parallel using independent sessions
+        portfolio_tasks = [
+            fetch_session_data(session_id) 
+            for session_id in PORTFOLIO_SESSIONS.keys()
+        ]
+        portfolio_results = await asyncio.gather(*portfolio_tasks)
+        portfolios = [p for p in portfolio_results if p is not None]
 
         if not portfolios:
             raise HTTPException(status_code=404, detail="No portfolio data found. Run generate_portfolio_ensemble.py first.")
@@ -219,24 +247,31 @@ async def get_portfolio_metrics(db: AsyncSession = Depends(get_db)):
         Simplified metrics for table display (strategy, return, drawdown, sharpe, final value)
     """
     try:
-        metrics = []
-
-        for session_id in PORTFOLIO_SESSIONS.keys():
-            portfolio_data = await get_portfolio_data(session_id, db)
-            if portfolio_data:
-                metrics.append({
-                    "session_id": portfolio_data["session_id"],
-                    "strategy": portfolio_data["name"],
-                    "category": portfolio_data["category"],
-                    "return": f"{portfolio_data['total_return']:.2f}%",
-                    "max_drawdown": f"{portfolio_data['max_drawdown']:.2f}%",
-                    "sharpe_ratio": f"{portfolio_data['sharpe_ratio']:.2f}",
-                    "final_value": f"${portfolio_data['final_value']:,.0f}",
-                    "gain_loss": f"${portfolio_data['final_value'] - portfolio_data['initial_value']:,.0f}",
-                })
-
-        # Sort by return (descending)
-        metrics.sort(key=lambda m: float(m["return"].rstrip("%")), reverse=True)
+        # Fetch all portfolios in parallel using independent sessions
+        portfolio_tasks = [
+            fetch_session_data(session_id)
+            for session_id in PORTFOLIO_SESSIONS.keys()
+        ]
+        portfolio_results = await asyncio.gather(*portfolio_tasks)
+        portfolio_data_list = [p for p in portfolio_results if p is not None]
+        
+        # Sort by return before formatting
+        portfolio_data_list.sort(key=lambda p: p["total_return"], reverse=True)
+        
+        # Format metrics after sorting
+        metrics = [
+            {
+                "session_id": p["session_id"],
+                "strategy": p["name"],
+                "category": p["category"],
+                "return": f"{p['total_return']:.2f}%",
+                "max_drawdown": f"{p['max_drawdown']:.2f}%",
+                "sharpe_ratio": f"{p['sharpe_ratio']:.2f}",
+                "final_value": f"${p['final_value']:,.0f}",
+                "gain_loss": f"${p['final_value'] - p['initial_value']:,.0f}",
+            }
+            for p in portfolio_data_list
+        ]
 
         return {
             "metrics": metrics,
@@ -257,14 +292,16 @@ async def get_comparison_status(db: AsyncSession = Depends(get_db)):
         Status of each portfolio (exists, ready, missing)
     """
     try:
+        # Check all portfolios using a single query for efficiency
+        session_ids = list(PORTFOLIO_SESSIONS.keys())
+        result = await db.execute(
+            select(PaperPortfolio).where(PaperPortfolio.session_id.in_(session_ids))
+        )
+        portfolios_map = {p.session_id: p for p in result.scalars().all()}
+        
         status = {}
-
         for session_id, info in PORTFOLIO_SESSIONS.items():
-            result = await db.execute(
-                select(PaperPortfolio).where(PaperPortfolio.session_id == session_id)
-            )
-            portfolio = result.scalar_one_or_none()
-
+            portfolio = portfolios_map.get(session_id)
             status[session_id] = {
                 "name": info["name"],
                 "exists": portfolio is not None,

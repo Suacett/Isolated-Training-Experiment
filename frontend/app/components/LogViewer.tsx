@@ -15,7 +15,7 @@ export default function LogViewer({ onClose }: LogViewerProps) {
     useEffect(() => {
         const fetchLogs = async () => {
             try {
-                const res = await fetch(getApiUrl("/logs"));
+                const res = await fetch(getApiUrl("/system/logs"));
                 if (res.ok) {
                     const data = await res.json();
                     setLogs(data.logs || []);

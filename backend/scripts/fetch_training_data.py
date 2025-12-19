@@ -27,6 +27,7 @@ import argparse
 from pathlib import Path
 from datetime import datetime, timedelta
 import pandas as pd  # For Wikipedia scraping
+import requests
 
 backend_path = Path(__file__).parent.parent
 sys.path.insert(0, str(backend_path))
@@ -114,7 +115,9 @@ def fetch_sp500_tickers() -> list:
     try:
         # Read S&P 500 list from Wikipedia
         url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
-        tables = pd.read_html(url)
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        tables = pd.read_html(response.text)
         sp500_table = tables[0]  # First table is the S&P 500 list
         
         # Get ticker symbols
@@ -182,60 +185,63 @@ async def fetch_all_data(tickers: list, mode: str = "full", concurrency: int = 5
 
 def validate_data():
     """Validate data quality in the database."""
-    import psycopg2
-    
-    DATABASE_URL = os.getenv("DATABASE_URL", "")
+    DATABASE_URL = os.getenv("DATABASE_URL")
+    if not DATABASE_URL:
+        raise ValueError("DATABASE_URL environment variable must be set")
     db_url = DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://")
     
-    conn = psycopg2.connect(db_url)
-    cur = conn.cursor()
-    
-    logger.info("="*60)
-    logger.info("📋 DATA QUALITY VALIDATION")
-    logger.info("="*60)
-    
-    # Check each ticker in training universe
-    issues = []
-    
-    for ticker in TRAINING_UNIVERSE:
-        cur.execute("""
-            SELECT 
-                COUNT(*) as total_records,
-                MIN(timestamp) as first_date,
-                MAX(timestamp) as last_date,
-                COUNT(*) FILTER (WHERE volume IS NULL OR volume = 0) as zero_volume_days,
-                COUNT(*) FILTER (WHERE close IS NULL) as null_close_days
-            FROM stock_prices 
-            WHERE ticker = %s
-        """, (ticker,))
-        
-        result = cur.fetchone()
-        total, first_date, last_date, zero_vol, null_close = result
-        
-        if total == 0:
-            issues.append(f"{ticker}: NO DATA")
-            logger.warning(f"❌ {ticker}: No data found")
-        elif total < 500:
-            issues.append(f"{ticker}: Only {total} records (need 500+)")
-            logger.warning(f"⚠️ {ticker}: Only {total} records (need 500+ for LSTM)")
-        else:
-            # Check if we have recession data (2008)
-            cur.execute("""
-                SELECT COUNT(*) FROM stock_prices 
-                WHERE ticker = %s AND timestamp < '2010-01-01'
-            """, (ticker,))
-            pre_2010 = cur.fetchone()[0]
-            
-            recession_status = "✅" if pre_2010 > 0 else "⚠️ Missing 2008 data"
-            
-            logger.info(
-                f"✅ {ticker}: {total:,} records | "
-                f"{first_date.strftime('%Y-%m-%d')} to {last_date.strftime('%Y-%m-%d')} | "
-                f"{recession_status}"
-            )
-    
-    cur.close()
-    conn.close()
+    try:
+        with psycopg2.connect(db_url) as conn:
+            with conn.cursor() as cur:
+                logger.info("="*60)
+                logger.info("📋 DATA QUALITY VALIDATION")
+                logger.info("="*60)
+                
+                # Check each ticker in training universe
+                issues = []
+                
+                for ticker in TRAINING_UNIVERSE:
+                    cur.execute("""
+                        SELECT 
+                            COUNT(*) as total_records,
+                            MIN(timestamp) as first_date,
+                            MAX(timestamp) as last_date,
+                            COUNT(*) FILTER (WHERE volume IS NULL OR volume = 0) as zero_volume_days,
+                            COUNT(*) FILTER (WHERE close IS NULL) as null_close_days
+                        FROM stock_prices 
+                        WHERE ticker = %s
+                    """, (ticker,))
+                    
+                    result = cur.fetchone()
+                    total, first_date, last_date, zero_vol, null_close = result
+                    
+                    if total == 0:
+                        issues.append(f"{ticker}: NO DATA")
+                        logger.warning(f"❌ {ticker}: No data found")
+                    elif total < 500:
+                        issues.append(f"{ticker}: Only {total} records (need 500+)")
+                        logger.warning(f"⚠️ {ticker}: Only {total} records (need 500+ for LSTM)")
+                    else:
+                        # Check if we have recession data (2008)
+                        cur.execute("""
+                            SELECT COUNT(*) FROM stock_prices 
+                            WHERE ticker = %s AND timestamp < '2010-01-01'
+                        """, (ticker,))
+                        pre_2010 = cur.fetchone()[0]
+                        
+                        recession_status = "✅" if pre_2010 > 0 else "⚠️ Missing 2008 data"
+                        
+                        first_date_str = first_date.strftime('%Y-%m-%d') if first_date else 'N/A'
+                        last_date_str = last_date.strftime('%Y-%m-%d') if last_date else 'N/A'
+                        
+                        logger.info(
+                            f"✅ {ticker}: {total:,} records | "
+                            f"{first_date_str} to {last_date_str} | "
+                            f"{recession_status}"
+                        )
+    except Exception as e:
+        logger.error(f"Validation failed: {e}")
+        return False
     
     logger.info("="*60)
     if issues:
@@ -254,42 +260,43 @@ def data_quality_cleanup():
     import psycopg2
     import pandas as pd
     
-    DATABASE_URL = os.getenv("DATABASE_URL", "")
+    DATABASE_URL = os.getenv("DATABASE_URL")
+    if not DATABASE_URL:
+        raise ValueError("DATABASE_URL environment variable must be set")
     db_url = DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://")
     
-    conn = psycopg2.connect(db_url)
-    cur = conn.cursor()
-    
-    logger.info("🧹 Running data quality cleanup...")
-    
-    # 1. Forward fill missing closes (within reason)
-    # This handles single-day gaps from holidays
-    fixed_count = 0
-    
-    for ticker in TRAINING_UNIVERSE:
-        cur.execute("""
-            SELECT timestamp, close FROM stock_prices 
-            WHERE ticker = %s 
-            ORDER BY timestamp
-        """, (ticker,))
-        
-        records = cur.fetchall()
-        if len(records) < 2:
-            continue
-            
-        for i in range(1, len(records)):
-            if records[i][1] is None:
-                prev_close = records[i-1][1]
-                cur.execute("""
-                    UPDATE stock_prices 
-                    SET close = %s 
-                    WHERE ticker = %s AND timestamp = %s AND close IS NULL
-                """, (prev_close, ticker, records[i][0]))
-                fixed_count += 1
-    
-    conn.commit()
-    cur.close()
-    conn.close()
+    try:
+        with psycopg2.connect(db_url) as conn:
+            with conn.cursor() as cur:
+                # 1. Forward fill missing closes (within reason)
+                # This handles single-day gaps from holidays
+                fixed_count = 0
+                
+                for ticker in TRAINING_UNIVERSE:
+                    cur.execute("""
+                        SELECT timestamp, close FROM stock_prices 
+                        WHERE ticker = %s 
+                        ORDER BY timestamp
+                    """, (ticker,))
+                    
+                    records = cur.fetchall()
+                    if len(records) < 2:
+                        continue
+                        
+                    for i in range(1, len(records)):
+                        if records[i][1] is None:
+                            prev_close = records[i-1][1]
+                            cur.execute("""
+                                UPDATE stock_prices 
+                                SET close = %s 
+                                WHERE ticker = %s AND timestamp = %s AND close IS NULL
+                            """, (prev_close, ticker, records[i][0]))
+                            fixed_count += 1
+                
+                conn.commit()
+    except Exception as e:
+        logger.error(f"Cleanup failed: {e}")
+        return
     
     logger.info(f"✅ Fixed {fixed_count} null close prices via forward fill")
 
@@ -327,7 +334,16 @@ async def main():
     # Fetch all data
     results = await fetch_all_data(tickers_to_fetch, mode=mode, concurrency=args.concurrency)
     
-    total_records = sum(r["records"] for r in results["success"])
+    # Verify record type and sum safely
+    def get_record_count(r):
+        recs = r.get("records", 0)
+        if isinstance(recs, list):
+            return len(recs)
+        if isinstance(recs, (int, float)):
+            return int(recs)
+        return 0
+
+    total_records = sum(get_record_count(r) for r in results["success"])
     logger.info(f"📊 Total records fetched: {total_records:,}")
     
     # Run validation

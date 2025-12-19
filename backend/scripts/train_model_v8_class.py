@@ -255,41 +255,46 @@ class LSTMClassifierV4(nn.Module):
 # =============================================================================
 
 def get_db_url():
-    url = os.getenv("DATABASE_URL", "")
+    url = os.getenv("DATABASE_URL")
+    if not url:
+        raise ValueError("DATABASE_URL environment variable must be set")
     return url.replace("postgresql+asyncpg://", "postgresql://")
 
 
 def get_ticker_list():
     """Get ALL tickers with sufficient history."""
     import psycopg2
-    conn = psycopg2.connect(get_db_url())
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT ticker, COUNT(*) as count 
-        FROM stock_prices GROUP BY ticker 
-        HAVING COUNT(*) >= %s ORDER BY count DESC LIMIT %s
-    """, (CONFIG["MIN_RECORDS"], CONFIG["MAX_STOCKS"]))
-    results = cur.fetchall()
-    cur.close()
-    conn.close()
-    return [(row[0], row[1]) for row in results]
+    try:
+        with psycopg2.connect(get_db_url()) as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT ticker, COUNT(*) as count 
+                    FROM stock_prices GROUP BY ticker 
+                    HAVING COUNT(*) >= %s ORDER BY count DESC LIMIT %s
+                """, (CONFIG["MIN_RECORDS"], CONFIG["MAX_STOCKS"]))
+                results = cur.fetchall()
+        return [(row[0], row[1]) for row in results]
+    except Exception as e:
+        logger.error(f"Failed to get ticker list: {e}")
+        return []
 
 
 def load_single_stock(ticker: str):
     """Load OHLCV data for a single stock."""
     import psycopg2
-    conn = psycopg2.connect(get_db_url())
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT timestamp, open, high, low, close, volume 
-        FROM stock_prices WHERE ticker = %s ORDER BY timestamp
-    """, (ticker,))
-    records = cur.fetchall()
-    cur.close()
-    conn.close()
-    
-    if records:
-        return pd.DataFrame(records, columns=['date', 'open', 'high', 'low', 'close', 'volume'])
+    try:
+        with psycopg2.connect(get_db_url()) as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT timestamp, open, high, low, close, volume 
+                    FROM stock_prices WHERE ticker = %s ORDER BY timestamp
+                """, (ticker,))
+                records = cur.fetchall()
+        
+        if records:
+            return pd.DataFrame(records, columns=['date', 'open', 'high', 'low', 'close', 'volume'])
+    except Exception as e:
+        logger.error(f"Failed to load data for {ticker}: {e}")
     return None
 
 
@@ -574,6 +579,10 @@ def train_pipeline():
             all_X_val.append(X_val)
             all_y_val.append(y_val)
     
+    if not all_X_train:
+        logger.error("No training data generated from any stock")
+        sys.exit(1)
+
     X_train = np.vstack(all_X_train)
     y_train_raw = np.vstack(all_y_train)
     X_val = np.vstack(all_X_val)

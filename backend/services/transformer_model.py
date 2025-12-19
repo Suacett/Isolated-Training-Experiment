@@ -31,9 +31,9 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def get_device() -> torch.device:
-    """Dynamic device selection."""
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+from services.device_utils import get_device
+
+__all__ = ['PositionalEncoding', 'TransformerRankModel', 'create_model', 'get_device']
 
 
 # =============================================================================
@@ -50,6 +50,9 @@ class PositionalEncoding(nn.Module):
     
     def __init__(self, d_model: int, max_len: int = 500, dropout: float = 0.1):
         super().__init__()
+        if d_model % 2 != 0:
+            raise ValueError(f"d_model must be even for positional encoding, got {d_model}")
+            
         self.dropout = nn.Dropout(p=dropout)
         
         # Create positional encoding matrix
@@ -255,7 +258,8 @@ class TransformerRankModel(nn.Module):
         if device is None:
             device = get_device()
             
-        checkpoint = torch.load(path, map_location=device, weights_only=False)
+        # Use weights_only=True for security to prevent arbitrary code execution
+        checkpoint = torch.load(path, map_location=device, weights_only=True)
         
         model = cls(
             input_dim=checkpoint['input_dim'],

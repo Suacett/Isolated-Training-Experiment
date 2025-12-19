@@ -27,6 +27,7 @@ import pickle
 import argparse
 import pandas as pd
 import numpy as np
+import psycopg2
 from pathlib import Path
 from datetime import datetime, timedelta
 from collections import defaultdict
@@ -79,46 +80,50 @@ SCALER_PATH = backend_path / "models" / "scaler_v9.pkl"
 # =============================================================================
 
 def get_db_url():
-    url = os.getenv("DATABASE_URL", "")
+    url = os.getenv("DATABASE_URL")
+    if not url:
+        raise ValueError("DATABASE_URL environment variable must be set")
     return url.replace("postgresql+asyncpg://", "postgresql://")
 
 
 def get_all_tickers():
     """Get all tickers with sufficient history, excluding non-tradable indices."""
-    import psycopg2
-    conn = psycopg2.connect(get_db_url())
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT ticker, COUNT(*) as count 
-        FROM stock_prices 
-        WHERE ticker NOT IN ('^VIX', 'VIX', 'SPY', 'QQQ', 'DIA', 'IWM')
-        GROUP BY ticker 
-        HAVING COUNT(*) >= 500 
-        ORDER BY count DESC
-    """)
-    results = cur.fetchall()
-    cur.close()
-    conn.close()
-    return [row[0] for row in results]
+    try:
+        with psycopg2.connect(get_db_url()) as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT ticker, COUNT(*) as count 
+                    FROM stock_prices 
+                    WHERE ticker NOT IN ('^VIX', 'VIX', 'SPY', 'QQQ', 'DIA', 'IWM')
+                    GROUP BY ticker 
+                    HAVING COUNT(*) >= 500 
+                    ORDER BY count DESC
+                """)
+                results = cur.fetchall()
+        return [row[0] for row in results]
+    except Exception as e:
+        logger.error(f"Error fetching tickers: {e}")
+        return []
 
 
 def load_stock_data(ticker: str) -> pd.DataFrame:
     """Load OHLCV data for a single stock."""
-    import psycopg2
-    conn = psycopg2.connect(get_db_url())
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT timestamp, open, high, low, close, volume 
-        FROM stock_prices WHERE ticker = %s ORDER BY timestamp
-    """, (ticker,))
-    records = cur.fetchall()
-    cur.close()
-    conn.close()
-    
-    if records:
-        df = pd.DataFrame(records, columns=['date', 'open', 'high', 'low', 'close', 'volume'])
-        df['ticker'] = ticker
-        return df
+    try:
+        with psycopg2.connect(get_db_url()) as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT timestamp, open, high, low, close, volume 
+                    FROM stock_prices WHERE ticker = %s ORDER BY timestamp
+                """, (ticker,))
+                records = cur.fetchall()
+        
+        if records:
+            df = pd.DataFrame(records, columns=['date', 'open', 'high', 'low', 'close', 'volume'])
+            df['ticker'] = ticker
+            return df
+    except Exception as e:
+        logger.error(f"Error loading stock data for {ticker}: {e}")
+        return None
     return None
 
 
@@ -278,8 +283,11 @@ def get_next_day_return(df: pd.DataFrame, date: pd.Timestamp) -> float:
         future_close = df.at[current_idx + 1, 'close']
         
         return (future_close - current_close) / current_close
-    except:
+    except (KeyError, IndexError, ValueError, Exception) as e:
+        if isinstance(e, (KeyboardInterrupt, SystemExit)):
+            raise
         # Fallback to slow method if index not aligned
+        logger.debug(f"Index error in next day return calculation, falling back: {e}")
         future = df[df['date'] > date].head(1)
         if len(future) == 0:
             return 0.0
@@ -318,6 +326,10 @@ def run_backtest(
     - Take Profit: sell if position gains take_profit% from entry
     """
     # Get all unique trading dates from keys of stock_data
+    if not stock_data:
+        logger.error("No stock data available for backtest")
+        raise RuntimeError("Empty stock_data dict")
+    
     sample_ticker = 'AAPL' if 'AAPL' in stock_data else list(stock_data.keys())[0]
     all_dates = sorted(stock_data[sample_ticker]['date'].tolist())
     
@@ -612,11 +624,16 @@ def main():
     parser.add_argument("--rebalance", type=int, default=5, help="Rebalance every N days")
     parser.add_argument("--slippage", type=float, default=0.001, help="Transaction cost per trade")
     parser.add_argument("--best", action="store_true", help="Use best correlation model")
+    parser.add_argument("--start-date", type=str, default="2023-01-01", help="Start date for backtest (YYYY-MM-DD)")
+    parser.add_argument("--end-date", type=str, default=None, help="End date for backtest (YYYY-MM-DD)")
     args = parser.parse_args()
     
     CONFIG["TOP_K"] = args.top_k
     CONFIG["REBALANCE_DAYS"] = args.rebalance
     CONFIG["SLIPPAGE"] = args.slippage
+    CONFIG["BACKTEST_START_DATE"] = args.start_date
+    if args.end_date:
+        CONFIG["BACKTEST_END_DATE"] = args.end_date
     
     # Device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -737,9 +754,25 @@ def main():
     
     # Show sample trades
     if results['trade_log']:
-        logger.info("\n📋 Sample Trades (First 5 Rebalances):")
+        logger.info("\n📋 Sample Trades (First 5 events):")
         for trade in results['trade_log'][:5]:
-            logger.info(f"  {trade['date'].strftime('%Y-%m-%d')}: {trade['holdings'][:5]}... (turnover: {trade['turnover']*100:.1f}%)")
+            if trade.get('action') == 'rebalance':
+                holdings_str = str(trade.get('holdings', []))[:50] + "..."
+                turnover = trade.get('turnover', 0) * 100
+                logger.info(f"  {trade['date'].strftime('%Y-%m-%d')}: REBALANCE - {holdings_str} (turnover: {turnover:.1f}%)")
+            else:
+                action = trade.get('action', 'unknown').upper()
+                ticker = trade.get('ticker', 'N/A')
+                
+                # Use available fields instead of non-existent 'reason'
+                details = ""
+                if action in ['STOP_LOSS', 'TAKE_PROFIT']:
+                    ret = trade.get('return_pct', 0.0)
+                    details = f"Return: {ret:+.2f}%"
+                else:
+                    details = f"Price: {trade.get('price', 'N/A')}"
+                    
+                logger.info(f"  {trade['date'].strftime('%Y-%m-%d')}: {action} - {ticker} ({details})")
 
 
 if __name__ == "__main__":

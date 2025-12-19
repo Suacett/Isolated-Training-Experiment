@@ -1,11 +1,14 @@
 import logging
 import numpy as np
+import torch
 from fastapi import APIRouter, HTTPException
 from services.db import get_historical_data, get_predictions_for_ticker, get_latest_close, get_watchlist_item
 from services.intrinsic import IntrinsicCalculator
 from services.risk_management import get_regime_exposure
 from datetime import datetime
 import pandas as pd
+from typing import List, Optional
+from pydantic import BaseModel
 from services.feature_engineering_v9 import (
     compute_v9_features,
     process_spy_data,
@@ -24,13 +27,21 @@ async def get_market_status():
     Get current market regime status (Bull, Bear, Crisis) based on SPY trend and VIX.
     """
     try:
-        # Fetch SPY and VIX data
-        spy_data = await get_historical_data("SPY", limit=300)
-        vix_data = await get_historical_data("^VIX", limit=50)
+        # Phase 1.2: Use cached SPY/VIX data if available (1-hour TTL)
+        spy_data = state.get_spy_cache()
+        if spy_data is None:
+            spy_data = await get_historical_data("SPY", limit=300)
+            if spy_data:
+                state.set_spy_cache(spy_data)
         
-        # fallback if ^VIX not found (Yahoo often uses ^VIX)
-        if not vix_data:
-             vix_data = await get_historical_data("VIX", limit=50)
+        vix_data = state.get_vix_cache()
+        if vix_data is None:
+            vix_data = await get_historical_data("^VIX", limit=50)
+            # fallback if ^VIX not found (Yahoo often uses ^VIX)
+            if not vix_data:
+                vix_data = await get_historical_data("VIX", limit=50)
+            if vix_data:
+                state.set_vix_cache(vix_data)
 
         current_date = pd.Timestamp.now()
         
@@ -206,15 +217,21 @@ async def get_dashboard_data(ticker: str):
             logger.debug(f"Skipping intrinsic value calculation for {ticker} (Alpha Vantage disabled)")
 
         # Fetch SPY data for comparison (if ticker is not SPY itself)
+        # Phase 1.2: Use cached SPY data when available
         spy_lookup = {}
         if ticker.upper() != "SPY":
             try:
-                spy_data = await get_historical_data("SPY", limit=5000)
+                spy_data = state.get_spy_cache()
+                if spy_data is None:
+                    spy_data = await get_historical_data("SPY", limit=5000)
+                    if spy_data:
+                        state.set_spy_cache(spy_data)
+                
                 if spy_data:
                     for sp in spy_data:
                         date_str = sp.timestamp.date().isoformat()
                         spy_lookup[date_str] = float(sp.close)
-                    logger.info(f"Loaded {len(spy_lookup)} SPY data points for comparison")
+                    logger.debug(f"Loaded {len(spy_lookup)} SPY data points for comparison (cached)")
             except Exception as e:
                 logger.warning(f"Failed to fetch SPY data for comparison: {e}")
 
@@ -246,4 +263,65 @@ async def get_dashboard_data(ticker: str):
         raise
     except Exception as e:
         logger.error(f"Error fetching dashboard data for {ticker}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# DashboardItem model removed as it was unused and creating confusion.
+# If needed in future, ensure it matches the dict structure below.
+
+
+@router.get("/dashboard", response_model=List[dict])
+async def get_dashboard_summary():
+    """
+    Get summary of all watchlist stocks for the dashboard/scanner.
+    """
+    from services.db import get_watchlist_with_favorites
+    
+    try:
+        watchlist_items = await get_watchlist_with_favorites()
+        summary = []
+        
+        for item in watchlist_items:
+            ticker = item["ticker"]
+            is_favorite = item["is_favorite"]
+            
+            # Fetch latest data
+            current_price = await get_latest_close(ticker)
+            if current_price is None:
+                continue
+                
+            # Fetch prediction (1d)
+            preds = await get_predictions_for_ticker(ticker, horizon="1d", limit=1)
+            prediction = None
+            signal = "NEUTRAL"
+            accuracy = False
+            
+            if preds:
+                pred = preds[0]
+                # Convert log return to price
+                prediction = current_price * np.exp(pred.predicted_value)
+                
+                # Determine signal
+                if prediction > current_price * 1.01:
+                    signal = "BUY"
+                elif prediction < current_price * 0.99:
+                    signal = "SELL"
+                    
+                # Accuracy logic removed until properly implemented
+                # accuracy = check_historical_accuracy...
+            
+            summary.append({
+                "ticker": ticker,
+                "current_price": current_price,
+                "prediction": prediction,
+                "signal": signal,
+                "intrinsic_value": None, # Loading this for all might be too slow
+                "source": "AI",
+                "is_favorite": is_favorite
+            })
+            
+        return summary
+        
+    except Exception as e:
+        logger.error(f"Error fetching dashboard summary: {e}")
         raise HTTPException(status_code=500, detail=str(e))

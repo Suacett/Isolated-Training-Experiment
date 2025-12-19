@@ -10,7 +10,7 @@ PAPER_SESSION_ID = os.getenv("PAPER_SESSION_ID", constants.DEFAULT_PAPER_SESSION
 # Database
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql+asyncpg://postgres:password@timescaledb:5432/stock_db"
+    constants.DEFAULT_DATABASE_URL
 )
 
 # Model paths (absolute)

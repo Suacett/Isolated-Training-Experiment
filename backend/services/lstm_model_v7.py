@@ -167,9 +167,12 @@ class LSTMModelV7(nn.Module):
             
         # Log GPU info
         if self.device.type == 'cuda':
-            gpu_name = torch.cuda.get_device_name(0)
-            gpu_mem = torch.cuda.get_device_properties(0).total_memory / 1e9
-            logger.info(f"🚀 LSTMModelV7 initializing on {gpu_name} ({gpu_mem:.1f} GB VRAM)")
+            # Use the resolved index
+            idx = self.device.index if self.device.index is not None else 0
+            
+            gpu_name = torch.cuda.get_device_name(idx)
+            gpu_mem = torch.cuda.get_device_properties(idx).total_memory / 1e9
+            logger.info(f"🚀 LSTMModelV7 initializing on {gpu_name} (Device {idx}, {gpu_mem:.1f} GB VRAM)")
             if use_cpu_offload:
                 logger.info(f"📤 CPU offload enabled - will use system RAM for overflow")
         else:
@@ -427,25 +430,34 @@ class LSTMModelV7(nn.Module):
         
     @classmethod
     def load(cls, path: str, device: Optional[torch.device] = None, use_cpu_offload: bool = False) -> 'LSTMModelV7':
-        """Load model from file."""
+        """
+        Load model from file.
+        WARNING: Loading checkpoints carries security risks. Only load from trusted sources.
+        """
         if device is None:
             device = get_device()
             
-        checkpoint = torch.load(path, map_location=device, weights_only=False)
+        ckpt = torch.load(path, map_location=device, weights_only=True)
         
+        # Validate keys
+        expected_keys = {'model_state_dict', 'input_dim', 'hidden_dim', 'output_dim', 'window_size'}
+        if not expected_keys.issubset(ckpt.keys()):
+             missing_keys = expected_keys - ckpt.keys()
+             raise ValueError(f"Checkpoint {path} missing required keys: {missing_keys}")
+
         model = cls(
-            input_dim=checkpoint['input_dim'],
-            hidden_dim=checkpoint['hidden_dim'],
-            num_layers=checkpoint.get('num_layers', 2),
-            output_dim=checkpoint['output_dim'],
-            window_size=checkpoint['window_size'],
-            dropout=checkpoint['dropout_p'],
-            num_attention_heads=checkpoint.get('num_attention_heads', 4),
+            input_dim=ckpt['input_dim'],
+            hidden_dim=ckpt['hidden_dim'],
+            num_layers=ckpt.get('num_layers', 2),
+            output_dim=ckpt['output_dim'],
+            window_size=ckpt['window_size'],
+            dropout=ckpt.get('dropout_p', 0.0),  # Use get() with default 0.0
+            num_attention_heads=ckpt.get('num_attention_heads', 4),
             use_cpu_offload=use_cpu_offload,
             device=device
         )
         
-        model.load_state_dict(checkpoint['model_state_dict'])
+        model.load_state_dict(ckpt['model_state_dict'])
         print(f"Model loaded from {path}")
         
         return model

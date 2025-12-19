@@ -8,10 +8,13 @@ Provides adaptive risk management tools that respect the momentum thesis:
 - Market regime detection (SPY trend + VIX)
 """
 
+import os
 import pandas as pd
-import numpy as np
 from typing import List, Dict, Tuple, Optional
 from config.constants import ATR_PARAMS, DRAWDOWN_THRESHOLDS, REGIME_PARAMS, VOLATILITY_PARAMS
+
+# Constants
+RISK_FREE_RATE = float(os.getenv("RISK_FREE_RATE", "0.045"))  # Default to ~4.5% (current TBills)
 
 
 # =============================================================================
@@ -21,28 +24,30 @@ from config.constants import ATR_PARAMS, DRAWDOWN_THRESHOLDS, REGIME_PARAMS, VOL
 def calculate_atr(df: pd.DataFrame, period: int = None) -> pd.Series:
     """
     Calculate Average True Range (ATR) for volatility measurement.
-
-    ATR measures the average range of price movement over N periods,
-    accounting for gaps. It's used for volatility-adjusted stops.
-
-    Args:
-        df: DataFrame with 'high', 'low', 'close' columns
-        period: Lookback period (default from ATR_PARAMS)
-
-    Returns:
-        Series of ATR values
     """
+    # 1. Input Validation
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        raise ValueError("Input 'df' must be a non-empty pandas DataFrame.")
+    
+    required_cols = ['high', 'low', 'close']
+    missing = [col for col in required_cols if col not in df.columns]
+    if missing:
+        raise ValueError(f"Missing required columns for ATR: {missing}")
+
     if period is None:
-        period = ATR_PARAMS["PERIOD"]
+        period = ATR_PARAMS.get("PERIOD", 14)
+    
+    if not isinstance(period, int) or period <= 0:
+        raise ValueError(f"Invalid ATR period: {period}. Must be an integer > 0.")
+        
+    if len(df) < period:
+        raise ValueError(f"DataFrame length ({len(df)}) is less than ATR period ({period}).")
+
     high = df['high']
     low = df['low']
     close = df['close']
     prev_close = close.shift(1)
 
-    # True Range = max of:
-    # 1. High - Low (current range)
-    # 2. abs(High - Previous Close) (gap up)
-    # 3. abs(Low - Previous Close) (gap down)
     tr1 = high - low
     tr2 = (high - prev_close).abs()
     tr3 = (low - prev_close).abs()
@@ -71,6 +76,9 @@ def get_atr_trailing_stop(
     Research shows 2.5x ATR is optimal for momentum strategies with
     weekly rebalancing (Perry Kaufman, "Trading Systems and Methods").
 
+    Note: MIN_STOP (0.97 = 3% loss) is numerically greater than FALLBACK_STOP 
+    (0.88 = 12% loss). This is correct as 0.97 represents a tighter exit.
+
     Args:
         stock_data: Dict mapping ticker -> DataFrame
         ticker: Stock symbol
@@ -92,10 +100,13 @@ def get_atr_trailing_stop(
         return highest_price * ATR_PARAMS["FALLBACK_STOP"]
 
     df = stock_data[ticker]
+    if 'date' not in df.columns:
+        return highest_price * ATR_PARAMS["FALLBACK_STOP"]
+
     df = df[df['date'] <= date].copy()
 
-    if len(df) < atr_period + 5:
-        # Not enough data, use fallback
+    MIN_ATR_EXTRA_PERIODS = 5
+    if len(df) < atr_period + MIN_ATR_EXTRA_PERIODS:
         return highest_price * ATR_PARAMS["FALLBACK_STOP"]
 
     # Calculate ATR
@@ -344,14 +355,14 @@ def select_with_correlation_filter(
 
         # Check correlation with already-selected stocks
         if selected:
-            max_pair_corr = max(
-                corr_matrix.loc[ticker, s]
-                for s in selected
-                if s in corr_matrix.columns
-            )
+            available_selected = [s for s in selected if s in corr_matrix.columns]
+            if not available_selected:
+                max_pair_corr = float("-inf")
+            else:
+                max_pair_corr = max(corr_matrix.loc[ticker, s] for s in available_selected)
 
             if max_pair_corr > max_corr:
-                continue  # Skip - too correlated with existing position
+                continue
 
         selected.append(ticker)
 
@@ -423,6 +434,9 @@ def calculate_volatility_weights(
 
     # Normalize to sum to 1.0
     total = sum(inv_vols.values())
+    if total == 0:
+        return {t: 1.0 / len(holdings) for t in holdings}
+        
     weights = {t: v / total for t, v in inv_vols.items()}
 
     return weights
@@ -461,6 +475,9 @@ def calculate_hybrid_weights(
 
     # Rank weights (linear scaling)
     rank_values = {t: rankings.get(t, 0.5) for t in holdings}
+    if not rank_values:
+        return {t: 1.0 / len(holdings) for t in holdings} if holdings else {}
+
     min_rank = min(rank_values.values())
     max_rank = max(rank_values.values())
     rank_range = max_rank - min_rank
@@ -490,6 +507,9 @@ def calculate_hybrid_weights(
 
     # Normalize to sum to 1.0
     total = sum(hybrid_weights.values())
+    if total == 0:
+        return {t: 1.0 / len(holdings) for t in holdings}
+        
     final_weights = {t: v / total for t, v in hybrid_weights.items()}
 
     return final_weights

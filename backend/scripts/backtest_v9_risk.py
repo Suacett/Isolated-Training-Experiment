@@ -108,39 +108,42 @@ def get_db_url():
 def get_all_tickers():
     """Get all tickers with sufficient history, excluding non-tradable indices."""
     import psycopg2
-    conn = psycopg2.connect(get_db_url())
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT ticker, COUNT(*) as count
-        FROM stock_prices
-        WHERE ticker NOT IN ('^VIX', 'VIX', 'SPY', 'QQQ', 'DIA', 'IWM')
-        GROUP BY ticker
-        HAVING COUNT(*) >= 500
-        ORDER BY count DESC
-    """)
-    results = cur.fetchall()
-    cur.close()
-    conn.close()
-    return [row[0] for row in results]
+    try:
+        with psycopg2.connect(get_db_url()) as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT ticker, COUNT(*) as count
+                    FROM stock_prices
+                    WHERE ticker NOT IN ('^VIX', 'VIX', 'SPY', 'QQQ', 'DIA', 'IWM')
+                    GROUP BY ticker
+                    HAVING COUNT(*) >= 500
+                    ORDER BY count DESC
+                """)
+                results = cur.fetchall()
+        return [row[0] for row in results]
+    except Exception as e:
+        logger.error(f"Failed to get tickers: {e}")
+        return []
 
 
 def load_stock_data(ticker: str) -> pd.DataFrame:
     """Load OHLCV data for a single stock."""
     import psycopg2
-    conn = psycopg2.connect(get_db_url())
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT timestamp, open, high, low, close, volume
-        FROM stock_prices WHERE ticker = %s ORDER BY timestamp
-    """, (ticker,))
-    records = cur.fetchall()
-    cur.close()
-    conn.close()
-
-    if records:
-        df = pd.DataFrame(records, columns=['date', 'open', 'high', 'low', 'close', 'volume'])
-        df['ticker'] = ticker
-        return df
+    try:
+        with psycopg2.connect(get_db_url()) as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT timestamp, open, high, low, close, volume
+                    FROM stock_prices WHERE ticker = %s ORDER BY timestamp
+                """, (ticker,))
+                records = cur.fetchall()
+        
+        if records:
+            df = pd.DataFrame(records, columns=['date', 'open', 'high', 'low', 'close', 'volume'])
+            df['ticker'] = ticker
+            return df
+    except Exception as e:
+        logger.error(f"Failed to load data for {ticker}: {e}")
     return None
 
 
@@ -288,7 +291,7 @@ def get_next_day_return(df: pd.DataFrame, date: pd.Timestamp) -> float:
         future_close = df.at[current_idx + 1, 'close']
 
         return (future_close - current_close) / current_close
-    except:
+    except Exception:
         future = df[df['date'] > date].head(1)
         if len(future) == 0:
             return 0.0
@@ -337,6 +340,10 @@ def run_backtest(
     5. Volatility-adjusted position sizing (inverse vol weighting)
     """
     # Get all unique trading dates
+    if not stock_data:
+        logger.error("No stock data available for backtest")
+        return None
+
     sample_ticker = 'AAPL' if 'AAPL' in stock_data else list(stock_data.keys())[0]
     all_dates = sorted(stock_data[sample_ticker]['date'].tolist())
 

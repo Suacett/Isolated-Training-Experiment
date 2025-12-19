@@ -16,7 +16,7 @@ export const HARDCODED_MODELS: ModelInfo[] = [
         description: "Predicts Volatility. Failed by buying 'Crash Volatility' (Falling Knives).",
         reasoning: "V8 learned to detect high-volatility regimes but couldn't distinguish between 'opportunity volatility' (bounce) and 'crisis volatility' (crash). It bought 2-sigma dips that kept dipping.",
         training_notes: "Binary classification. High buy signal recall, low precision.",
-        is_available: true,
+        is_available: false, // is_available indicates whether the model is available for selection/use (false for retired)
         status: "retired",
     },
     {
@@ -25,7 +25,7 @@ export const HARDCODED_MODELS: ModelInfo[] = [
         description: "Predicts exact price. Failed due to 'Lazy Learner' bias (predicting t+1 = t).",
         reasoning: "V7 learned to minimize MSE by predicting tomorrow's price ≈ today's price. The model had no incentive to predict direction, only minimize error.",
         training_notes: "LSTM 128 hidden units. 41 features. DirectionalLoss didn't help.",
-        is_available: true,
+        is_available: false,
         status: "retired",
     },
 ];

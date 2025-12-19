@@ -16,12 +16,12 @@ from services.db import (
     delete_stock_data,
     get_favorites,
     set_favorite,
-    get_watchlist_with_favorites
+    get_watchlist_with_favorites,
+    get_unique_tickers
 )
 from services.data_ingest import YahooFinanceClient, sync_ingest_hybrid_data
 
 router = APIRouter(
-    prefix="/stocks",
     tags=["stocks"]
 )
 
@@ -64,6 +64,15 @@ async def list_stocks_with_favorites():
     List all tickers with their favorite status.
     """
     return await get_watchlist_with_favorites()
+
+
+@router.get("/tickers")
+async def list_tickers():
+    """
+    List all unique tickers found in the historical data.
+    """
+    tickers = await get_unique_tickers()
+    return {"tickers": tickers}
 
 
 @router.get("/favorites", response_model=List[str])

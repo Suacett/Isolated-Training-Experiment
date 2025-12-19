@@ -7,7 +7,7 @@ doesn't break core feature computation logic.
 These tests verify:
 - compute_technical_features() computes all 39 features correctly
 - process_stock_data() handles edge cases (missing data, NaN values)
-- Feature column lists match expected counts (37 for v6, 41 for v7)
+- Feature column lists match expected counts (37 for v6, 43 for v7)
 """
 
 import pytest
@@ -293,7 +293,7 @@ def test_get_feature_columns_count():
     columns = get_feature_columns()
     
     # V7 has 43 total feature columns (including close, YesterdayClose)
-    assert len(columns) >= 40, f"Expected ~43 columns, got {len(columns)}"
+    assert len(columns) == 43, f"Expected 43 columns, got {len(columns)}"
 
 
 def test_get_model_input_features_count():

@@ -113,7 +113,8 @@ def load_validation_data(feature_cols: list, scaler: StandardScaler, class_thres
         
         try:
             processed = process_stock_data(df.copy(), create_targets=True)
-        except:
+        except Exception as e:
+            logger.exception(f"Error processing {ticker} (Target generation failed): {e}")
             continue
         
         min_required = CONFIG["WINDOW_SIZE"] + CONFIG["MAX_HORIZON"] + 10
@@ -131,11 +132,11 @@ def load_validation_data(feature_cols: list, scaler: StandardScaler, class_thres
         X_list, y_list = [], []
         stride = CONFIG["MAX_HORIZON"]
         
-        for i in range(CONFIG["WINDOW_SIZE"], len(features), stride):
-            target = targets[i]
+        for idx in range(CONFIG["WINDOW_SIZE"], len(features), stride):
+            target = targets[idx]
             if np.isnan(target).any():
                 continue
-            X_list.append(features[i - CONFIG["WINDOW_SIZE"]:i])
+            X_list.append(features[idx - CONFIG["WINDOW_SIZE"]:idx])
             y_list.append(target)
         
         if not X_list:
@@ -159,6 +160,10 @@ def load_validation_data(feature_cols: list, scaler: StandardScaler, class_thres
             all_X_val.append(X_scaled.astype(np.float32))
             all_y_val_raw.append(y_val.astype(np.float32))
     
+    if not all_X_val or not all_y_val_raw:
+        logger.warning("No validation data was collected. Skipping calibration steps.")
+        return np.array([]), np.array([]), np.array([])
+        
     X_val = np.vstack(all_X_val)
     y_val_raw = np.vstack(all_y_val_raw)
     
@@ -180,8 +185,7 @@ def run_calibration(horizon_idx: int = 0, horizon_name: str = "1d"):
     
     # Load model
     if not MODEL_PATH.exists():
-        logger.error(f"Model not found at {MODEL_PATH}")
-        return
+        raise FileNotFoundError(f"Model not found at {MODEL_PATH}")
     
     logger.info(f"Loading V8 model from {MODEL_PATH}...")
     model = LSTMModelV8Class.load(str(MODEL_PATH))
@@ -212,6 +216,12 @@ def run_calibration(horizon_idx: int = 0, horizon_name: str = "1d"):
     
     # Load validation data
     X_val, y_val_binary, y_val_raw = load_validation_data(feature_cols, scaler, class_thresholds)
+    
+    # Handle empty validation data
+    if len(X_val) == 0:
+        logger.warning("No validation data available. Skipping calibration.")
+        return
+        
     logger.info(f"Validation samples: {len(X_val)}")
     
     # Get model probabilities

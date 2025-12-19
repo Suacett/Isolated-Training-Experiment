@@ -172,8 +172,18 @@ export default function PortfolioComparison() {
               {data.portfolios.map((portfolio, idx) => (
                 <tr
                   key={portfolio.session_id}
-                  className="border-b border-white/[0.08] hover:bg-zinc-800/30 transition-colors cursor-pointer"
+                  tabIndex={0}
+                  role="button"
+                  aria-label={`Select ${portfolio.name} strategy`}
+                  className={`border-b border-white/[0.08] hover:bg-zinc-800/30 transition-colors cursor-pointer outline-none focus:bg-zinc-800/50 ${selectedPortfolios.has(portfolio.session_id) ? "bg-zinc-800/20" : ""
+                    }`}
                   onClick={() => togglePortfolio(portfolio.session_id)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      togglePortfolio(portfolio.session_id);
+                    }
+                  }}
                 >
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
@@ -219,7 +229,7 @@ export default function PortfolioComparison() {
             <XAxis
               dataKey="date"
               tick={{ fill: "#a1a1aa", fontSize: 12 }}
-              interval={Math.floor(chartData.length / 10)}
+              interval={Math.max(1, Math.floor(chartData.length / 10))}
               stroke="#52525b"
             />
             <YAxis
@@ -238,21 +248,27 @@ export default function PortfolioComparison() {
             />
             <Legend wrapperStyle={{ paddingTop: "20px" }} />
 
-            {portfoliosForChart.map((portfolio, idx) => (
-              <Line
-                key={portfolio.session_id}
-                type="monotone"
-                dataKey={portfolio.session_id}
-                stroke={PORTFOLIO_COLORS[idx % PORTFOLIO_COLORS.length]}
-                strokeWidth={2}
-                dot={false}
-                isAnimationActive={false}
-                data={portfolio.equity_curve.map(point => ({
-                  date: point.date,
-                  [portfolio.session_id]: point.value
-                }))}
-              />
-            ))}
+            {portfoliosForChart.map((portfolio) => {
+              // Map to a unified structure where each data point has the session_id as the key
+              const unifiedData = portfolio.equity_curve.map(point => ({
+                date: point.date,
+                [portfolio.session_id]: point.value
+              }));
+              const originalIndex = data.portfolios.findIndex(p => p.session_id === portfolio.session_id);
+
+              return (
+                <Line
+                  key={portfolio.session_id}
+                  type="monotone"
+                  dataKey={portfolio.session_id}
+                  stroke={PORTFOLIO_COLORS[originalIndex % PORTFOLIO_COLORS.length]}
+                  strokeWidth={2}
+                  dot={false}
+                  isAnimationActive={false}
+                  data={unifiedData}
+                />
+              );
+            })}
           </LineChart>
         </ResponsiveContainer>
       </div>
@@ -265,11 +281,10 @@ export default function PortfolioComparison() {
             <button
               key={portfolio.session_id}
               onClick={() => togglePortfolio(portfolio.session_id)}
-              className={`flex items-center gap-2 px-3 py-2 rounded text-xs transition-all ${
-                selectedPortfolios.has(portfolio.session_id)
-                  ? "bg-zinc-700 text-white"
-                  : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700/50"
-              }`}
+              className={`flex items-center gap-2 px-3 py-2 rounded text-xs transition-all ${selectedPortfolios.has(portfolio.session_id)
+                ? "bg-zinc-700 text-white"
+                : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700/50"
+                }`}
             >
               <div
                 className="w-2 h-2 rounded-full flex-shrink-0"

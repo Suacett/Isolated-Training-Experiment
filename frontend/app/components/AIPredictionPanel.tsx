@@ -23,9 +23,9 @@ interface AIPredictionPanelProps {
     initialTicker?: string;
 }
 
-export default function AIPredictionPanel({ isOpen, onClose }: AIPredictionPanelProps) {
+export default function AIPredictionPanel({ isOpen, onClose, initialTicker }: AIPredictionPanelProps) {
     const [tickers, setTickers] = useState<string[]>([]);
-    const [selectedTicker, setSelectedTicker] = useState<string>("");
+    const [selectedTicker, setSelectedTicker] = useState<string>(initialTicker || "");
     const [detailData, setDetailData] = useState<DetailResponse | null>(null);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -35,20 +35,28 @@ export default function AIPredictionPanel({ isOpen, onClose }: AIPredictionPanel
     useEffect(() => {
         if (isOpen) {
             fetch(getApiUrl('/dashboard'))
-                .then((res) => res.json())
+                .then((res) => {
+                    if (!res.ok) throw new Error("Failed to fetch tickers");
+                    return res.json();
+                })
                 .then((data) => {
                     const list = data.map((d: any) => d.ticker);
                     setTickers(list);
-                    if (list.length > 0 && !selectedTicker) {
-                        setSelectedTicker(list[0]);
+                    if (list.length > 0) {
+                        setSelectedTicker(current => current || list[0]);
                     }
                 })
-                .catch(console.error);
+                .catch(err => {
+                    console.error("Dashboard list fetch failed:", err);
+                    setError("Failed to load ticker list");
+                });
 
             // Fetch active model
             fetch(getApiUrl('/status/ai'))
-                .then((res) => res.json())
-                .then((data) => setModelVersion(data.model_version || "V9 Ranker"))
+                .then((res) => res.ok ? res.json() : null)
+                .then((data) => {
+                    if (data) setModelVersion(data.model_version || "V9 Ranker");
+                })
                 .catch(() => setModelVersion("V9 Ranker"));
         }
     }, [isOpen]);
@@ -107,9 +115,13 @@ export default function AIPredictionPanel({ isOpen, onClose }: AIPredictionPanel
 
         // But for now, let's use percent volatility as fallback if high/low missing
         // Fallback: 2 * std_dev(returns) * price
-        const returns = prices.map((p, i) => i === 0 ? 0 : Math.log(p / prices[i - 1]));
+        const returns = prices.map((p, i) => i === 0 ? 0 : Math.log(p / (prices[i - 1] || p || 1)));
         const recentReturns = returns.slice(-20);
-        const stdDev = Math.sqrt(recentReturns.reduce((a, b) => a + Math.pow(b, 2), 0) / recentReturns.length - Math.pow(recentReturns.reduce((a, b) => a + b, 0) / recentReturns.length, 2));
+        const meanReturn = recentReturns.reduce((a, b) => a + b, 0) / (recentReturns.length || 1);
+        const variance = recentReturns.reduce((a, b) => a + Math.pow(b - meanReturn, 2), 0) / (recentReturns.length || 1);
+
+        // Final guard against epsilon
+        const stdDev = Math.sqrt(Math.max(0, variance) + 1e-12);
         const estimatedAtr = stdDev * latest.close;
 
         const atrStop = latest.close - (2.5 * estimatedAtr);
@@ -242,7 +254,7 @@ export default function AIPredictionPanel({ isOpen, onClose }: AIPredictionPanel
                                         <ShieldAlert size={16} className="text-zinc-600" />
                                     </div>
                                     <div className="text-2xl font-mono text-zinc-200">
-                                        ${metrics?.atrStop.toFixed(2)}
+                                        ${metrics?.atrStop != null ? metrics.atrStop.toFixed(2) : "—"}
                                     </div>
                                     <div className="mt-1 text-xs text-zinc-500">
                                         Trailing 2.5x ATR
@@ -256,7 +268,7 @@ export default function AIPredictionPanel({ isOpen, onClose }: AIPredictionPanel
                                         <Zap size={16} className="text-zinc-600" />
                                     </div>
                                     <div className="text-2xl font-mono text-zinc-200">
-                                        {metrics?.correlation.toFixed(2)}
+                                        {metrics?.correlation != null ? metrics.correlation.toFixed(2) : "—"}
                                     </div>
                                     <div className="mt-1 text-xs text-zinc-500">
                                         Beta exposure to market
@@ -328,7 +340,6 @@ export default function AIPredictionPanel({ isOpen, onClose }: AIPredictionPanel
                                     </ResponsiveContainer>
                                 </div>
                             </div>
-
                         </div>
                     )}
                 </div>

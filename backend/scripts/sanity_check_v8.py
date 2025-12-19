@@ -52,33 +52,33 @@ def get_db_url():
 
 def get_ticker_list():
     import psycopg2
-    conn = psycopg2.connect(get_db_url())
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT ticker, COUNT(*) as count 
-        FROM stock_prices GROUP BY ticker 
-        HAVING COUNT(*) >= %s ORDER BY count DESC LIMIT %s
-    """, (CONFIG["MIN_RECORDS"], CONFIG["MAX_STOCKS"]))
-    results = cur.fetchall()
-    cur.close()
-    conn.close()
-    return [(row[0], row[1]) for row in results]
+    with psycopg2.connect(get_db_url()) as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT ticker, COUNT(*) as count 
+                FROM stock_prices GROUP BY ticker 
+                HAVING COUNT(*) >= %s ORDER BY count DESC LIMIT %s
+            """, (CONFIG["MIN_RECORDS"], CONFIG["MAX_STOCKS"]))
+            results = cur.fetchall()
+            return [(row[0], row[1]) for row in results]
 
 
 def load_single_stock(ticker: str):
     import psycopg2
-    conn = psycopg2.connect(get_db_url())
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT timestamp, open, high, low, close, volume 
-        FROM stock_prices WHERE ticker = %s ORDER BY timestamp
-    """, (ticker,))
-    records = cur.fetchall()
-    cur.close()
-    conn.close()
-    
-    if records:
-        return pd.DataFrame(records, columns=['date', 'open', 'high', 'low', 'close', 'volume'])
+    try:
+        with psycopg2.connect(get_db_url()) as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT timestamp, open, high, low, close, volume 
+                    FROM stock_prices WHERE ticker = %s ORDER BY timestamp
+                """, (ticker,))
+                records = cur.fetchall()
+                
+                if records:
+                    return pd.DataFrame(records, columns=['date', 'open', 'high', 'low', 'close', 'volume'])
+    except Exception as e:
+        logger.error(f"Error loading {ticker}: {e}")
+        
     return None
 
 
@@ -242,7 +242,7 @@ def run_sanity_check():
         logger.info("\n   ✅ PASS: Class balance is acceptable (15-35%)")
     else:
         logger.warning("\n   ⚠️ WARNING: Class balance may need adjustment")
-        logger.warning("   If positives < 5%, decrease THRESHOLD_SIGMA (currently 2.0)")
+        logger.warning(f"   If positives < 5%, decrease THRESHOLD_SIGMA (currently {CONFIG['THRESHOLD_SIGMA']})")
         logger.warning("   If positives > 50%, increase THRESHOLD_SIGMA")
     
     # === CHECK 4: Data Loading Order ===

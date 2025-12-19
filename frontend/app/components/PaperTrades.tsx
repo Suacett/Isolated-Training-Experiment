@@ -40,6 +40,7 @@ export default function PaperTrades({ trades }: PaperTradesProps) {
     const formatTime = (dateStr: string) => {
         try {
             const d = new Date(dateStr);
+            if (isNaN(d.getTime())) return dateStr;
             return d.toLocaleDateString() + " " + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         } catch {
             return dateStr;

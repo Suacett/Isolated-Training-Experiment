@@ -97,9 +97,11 @@ class LSTMModelV8Class(nn.Module):
             self.device = device
             
         if self.device.type == 'cuda':
-            gpu_name = torch.cuda.get_device_name(0)
-            gpu_mem = torch.cuda.get_device_properties(0).total_memory / 1e9
-            logger.info(f"🚀 LSTMModelV8Class (V4) on {gpu_name} ({gpu_mem:.1f} GB)")
+            # Use the actual device index assigned (torch.cuda.current_device() is often default, index is better)
+            dev_idx = self.device.index if self.device.index is not None else torch.cuda.current_device()
+            gpu_name = torch.cuda.get_device_name(dev_idx)
+            gpu_mem = torch.cuda.get_device_properties(dev_idx).total_memory / 1e9
+            logger.info(f"🚀 LSTMModelV8Class (V4) on {gpu_name} (index {dev_idx}) - {gpu_mem:.1f} GB")
         else:
             logger.warning("⚠️ LSTMModelV8Class running on CPU")
         
@@ -263,7 +265,7 @@ class LSTMModelV8Class(nn.Module):
             'num_attention_heads': self.num_attention_heads,
             'version': 'v8-class-v4compliant'
         }, path)
-        print(f"Model saved to {path}")
+        logger.info(f"Model saved to {path}")
         
     @classmethod
     def load(cls, path: str, device: Optional[torch.device] = None, use_cpu_offload: bool = False) -> 'LSTMModelV8Class':
@@ -271,7 +273,7 @@ class LSTMModelV8Class(nn.Module):
         if device is None:
             device = get_device()
             
-        checkpoint = torch.load(path, map_location=device, weights_only=False)
+        checkpoint = torch.load(path, map_location=device, weights_only=True)
         
         model = cls(
             input_dim=checkpoint['input_dim'],
@@ -286,6 +288,6 @@ class LSTMModelV8Class(nn.Module):
         )
         
         model.load_state_dict(checkpoint['model_state_dict'])
-        print(f"Model loaded from {path}")
+        logger.info(f"Model loaded from {path}")
         
         return model

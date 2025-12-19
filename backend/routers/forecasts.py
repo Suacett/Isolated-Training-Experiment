@@ -5,6 +5,7 @@ Routes for getting AI forecasts at various time horizons.
 """
 
 import logging
+import re
 import torch
 import numpy as np
 import pandas as pd
@@ -23,6 +24,15 @@ async def get_forecasts(ticker: str):
     Get multi-horizon AI forecasts for a ticker.
     Returns predictions for 1d, 1w, 1m, 6m horizons.
     """
+    # Input validation
+    if not ticker:
+        raise HTTPException(status_code=400, detail="Ticker is required")
+        
+    ticker = ticker.strip().upper()
+    if not re.match(r'^[A-Z0-9.-]{1,6}$', ticker):
+        logger.warning(f"Invalid ticker format received: {ticker}")
+        raise HTTPException(status_code=400, detail="Invalid ticker format")
+        
     current_price = await get_latest_close(ticker)
     if current_price is None:
         raise HTTPException(status_code=404, detail="Ticker not found")
@@ -30,8 +40,13 @@ async def get_forecasts(ticker: str):
     if not state.lstm_model:
         raise HTTPException(status_code=503, detail="Model not loaded")
         
+    import asyncio
     try:
-        historical_data = await get_historical_data(ticker, limit=100)
+        try:
+            historical_data = await asyncio.wait_for(get_historical_data(ticker, limit=100), timeout=10.0)
+        except asyncio.TimeoutError:
+            raise HTTPException(status_code=504, detail="Timeout fetching historical data")
+            
         if len(historical_data) < 60:
             raise HTTPException(status_code=400, detail="Insufficient data")
             
@@ -111,4 +126,4 @@ async def get_forecasts(ticker: str):
         raise
     except Exception as e:
         logger.error(f"Forecast error for {ticker}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")

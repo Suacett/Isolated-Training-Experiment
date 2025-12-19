@@ -11,7 +11,7 @@ import logging
 import pandas as pd
 import httpx
 from sqlalchemy.dialects.postgresql import insert
-from services.db import StockPrice, AsyncSessionLocal
+from services.db import StockPrice, AsyncSessionLocal, bulk_upsert_stock_prices
 
 logger = logging.getLogger(__name__)
 
@@ -86,26 +86,19 @@ class YahooFinanceClient:
         logger.info(f"📊 Fetching data for {ticker} from Yahoo Finance (mode={mode})...")
         
         try:
-            # Calculate date range
             end_date = datetime.now() + timedelta(days=1)
             
             if mode == "daily":
-                # Fetch last 5 days to ensure we catch up on weekends/holidays
                 start_date = datetime.now() - timedelta(days=5)
             else:
-                # Full history
                 start_date = datetime(1980, 1, 1)
             
             logger.info(f"📅 Fetching data from {start_date.date()} to {end_date.date()}")
             
-            # Yahoo Finance expects Unix timestamps
-            period1 = int(start_date.timestamp())
-            period2 = int(end_date.timestamp())
-            
             url = f"{self.BASE_URL}/{ticker}"
             params = {
-                "period1": period1,
-                "period2": period2,
+                "period1": int(start_date.timestamp()),
+                "period2": int(end_date.timestamp()),
                 "interval": "1d",
                 "events": "history"
             }
@@ -115,7 +108,8 @@ class YahooFinanceClient:
                 
                 if response.status_code != 200:
                     logger.error(f"Yahoo Finance API returned {response.status_code} for {ticker}")
-                    raise ValueError(f"API error: {response.status_code}")
+                    from exceptions import DataIngestionError
+                    raise DataIngestionError(f"API error: {response.status_code}")
                 
                 data = response.json()
             
@@ -158,27 +152,10 @@ class YahooFinanceClient:
                 logger.warning(f"No valid data parsed for {ticker}")
                 raise ValueError(f"No valid data parsed for {ticker}")
             
-            # Upsert data in batches to avoid PostgreSQL's 32767 parameter limit
-            # Each row has 6 columns, so 1000 rows = 6000 parameters (well under limit)
-            BATCH_SIZE = 1000
             async with AsyncSessionLocal() as session:
-                for batch_start in range(0, len(stock_prices), BATCH_SIZE):
-                    batch = stock_prices[batch_start:batch_start + BATCH_SIZE]
-                    stmt = insert(StockPrice).values(batch)
-                    stmt = stmt.on_conflict_do_update(
-                        index_elements=[StockPrice.ticker, StockPrice.timestamp],
-                        set_={
-                            "open": stmt.excluded.open,
-                            "high": stmt.excluded.high,
-                            "low": stmt.excluded.low,
-                            "close": stmt.excluded.close,
-                            "volume": stmt.excluded.volume
-                        }
-                    )
-                    await session.execute(stmt)
-                await session.commit()
-                logger.info(f"✅ Saved {len(stock_prices)} records for {original_ticker} (Yahoo Finance) in {(len(stock_prices) + BATCH_SIZE - 1) // BATCH_SIZE} batches")
+                await bulk_upsert_stock_prices(session, stock_prices)
                 
+            logger.info(f"✅ Saved {len(stock_prices)} records for {original_ticker}")
             return len(stock_prices)
         
         except Exception as e:
@@ -419,185 +396,28 @@ async def ingest_hybrid_data(ticker: str, mode: str = "full") -> dict:
 
 def sync_ingest_hybrid_data(ticker: str) -> dict:
     """
-    Synchronous version of hybrid data ingestion for use in background tasks.
-    Uses requests library instead of httpx to avoid event loop issues.
+    Synchronous wrapper for hybrid data ingestion.
+    
+    Phase 3 DRY Refactor: Uses asyncio.run() to call the async version,
+    eliminating ~170 lines of duplicated code.
+    
+    Note: This should only be called from threads that don't have an
+    existing event loop (e.g., FastAPI BackgroundTasks, standalone scripts).
     """
-    import requests
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import sessionmaker
-    from sqlalchemy.dialects.postgresql import insert as pg_insert
-    import os
+    import asyncio
     
-    DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:password@timescaledb:5432/stock_db")
-    # Convert async URL to sync
-    SYNC_DATABASE_URL = DATABASE_URL.replace("+asyncpg", "")
+    logger.info(f"🔄 sync_ingest_hybrid_data called for {ticker} - delegating to async version")
     
-    results = {
-        "ticker": ticker,
-        "price_records": 0,
-        "sentiment_records": 0,
-        "source": "hybrid"
-    }
-    
-    logger.info(f"🔄 Starting hybrid ingestion for {ticker} (sync)")
-    
-    # Step 1: Fetch Yahoo Finance OHLCV
     try:
-        yf = YahooFinanceClient()
-        normalized_ticker = yf.normalize_ticker(ticker)
-        
-        end_date = datetime.now() + timedelta(days=1)
-        start_date = datetime(1980, 1, 1)  # Fetch all available history
-        
-        url = f"{yf.BASE_URL}/{normalized_ticker}"
-        params = {
-            "period1": int(start_date.timestamp()),
-            "period2": int(end_date.timestamp()),
-            "interval": "1d",
-            "events": "history"
-        }
-        
-        response = requests.get(url, params=params, headers=yf.HEADERS, timeout=30)
-        response.raise_for_status()
-        data = response.json()
-        
-        result = data.get("chart", {}).get("result")
-        if not result:
-            raise ValueError(f"No data found for {ticker}")
-        
-        result = result[0]
-        timestamps = result.get("timestamp", [])
-        quote = result.get("indicators", {}).get("quote", [{}])[0]
-        
-        stock_prices = []
-        for i, ts in enumerate(timestamps):
-            opens = quote.get("open", [])
-            highs = quote.get("high", [])
-            lows = quote.get("low", [])
-            closes = quote.get("close", [])
-            volumes = quote.get("volume", [])
-            
-            if i >= len(opens) or opens[i] is None or closes[i] is None:
-                continue
-                
-            stock_prices.append({
-                "ticker": ticker,
-                "timestamp": datetime.fromtimestamp(ts),
-                "open": float(opens[i]),
-                "high": float(highs[i]) if highs[i] else float(opens[i]),
-                "low": float(lows[i]) if lows[i] else float(closes[i]),
-                "close": float(closes[i]),
-                "volume": float(volumes[i]) if volumes[i] else 0.0
-            })
-        
-        # Save to database (sync) in batches to avoid PostgreSQL's 32767 parameter limit
-        BATCH_SIZE = 1000
-        engine = create_engine(SYNC_DATABASE_URL)
-        Session = sessionmaker(bind=engine)
-        with Session() as session:
-            for batch_start in range(0, len(stock_prices), BATCH_SIZE):
-                batch = stock_prices[batch_start:batch_start + BATCH_SIZE]
-                stmt = pg_insert(StockPrice).values(batch)
-                stmt = stmt.on_conflict_do_update(
-                    index_elements=["ticker", "timestamp"],
-                    set_={
-                        "open": stmt.excluded.open,
-                        "high": stmt.excluded.high,
-                        "low": stmt.excluded.low,
-                        "close": stmt.excluded.close,
-                        "volume": stmt.excluded.volume
-                    }
-                )
-                session.execute(stmt)
-            session.commit()
-        
-        results["price_records"] = len(stock_prices)
-        logger.info(f"✅ Saved {len(stock_prices)} price records for {ticker} in {(len(stock_prices) + BATCH_SIZE - 1) // BATCH_SIZE} batches")
-        
-    except Exception as e:
-        logger.error(f"Failed to fetch price data for {ticker}: {e}")
+        return asyncio.run(ingest_hybrid_data(ticker, mode="full"))
+    except RuntimeError as e:
+        # Handle case where event loop is already running (shouldn't happen in background tasks)
+        if "cannot be called from a running event loop" in str(e):
+            logger.warning(f"Event loop already running for {ticker}, using nested asyncio")
+            import nest_asyncio
+            nest_asyncio.apply()
+            return asyncio.run(ingest_hybrid_data(ticker, mode="full"))
         raise
-    
-    # Step 2: Fetch Alpha Vantage Sentiment
-    try:
-        av_client = AlphaVantageClient()
-        if not av_client.api_key:
-            logger.warning("Alpha Vantage API Key not found - skipping sentiment")
-        else:
-            params = {
-                "function": "NEWS_SENTIMENT",
-                "tickers": ticker,
-                "limit": 500,
-                "apikey": av_client.api_key
-            }
-            
-            logger.info(f"📰 Fetching news sentiment for {ticker}...")
-            response = requests.get(av_client.base_url, params=params, timeout=30)
-            data = response.json()
-            
-            if "Error Message" not in data and "Note" not in data:
-                feed = data.get("feed", [])
-                
-                records = []
-                for article in feed:
-                    try:
-                        time_str = article.get("time_published", "")
-                        if len(time_str) >= 8:
-                            date = datetime.strptime(time_str[:8], "%Y%m%d").date()
-                        else:
-                            continue
-                        
-                        ticker_sentiments = article.get("ticker_sentiment", [])
-                        for ts in ticker_sentiments:
-                            if ts.get("ticker", "").upper() == ticker.upper():
-                                sentiment_score = float(ts.get("ticker_sentiment_score", 0))
-                                records.append({
-                                    "date": date,
-                                    "sentiment": sentiment_score
-                                })
-                                break
-                    except Exception:
-                        continue
-                
-                if records:
-                    from services.db import SentimentData
-                    
-                    df = pd.DataFrame(records)
-                    daily = df.groupby("date").agg(
-                        sentiment=("sentiment", "mean"),
-                        num_articles=("sentiment", "count")
-                    ).reset_index()
-                    
-                    sentiment_records = []
-                    for _, row in daily.iterrows():
-                        sentiment_records.append({
-                            "ticker": ticker,
-                            "date": datetime.combine(row["date"], datetime.min.time()),
-                            "sentiment": row["sentiment"],
-                            "num_articles": int(row["num_articles"])
-                        })
-                    
-                    engine = create_engine(SYNC_DATABASE_URL)
-                    Session = sessionmaker(bind=engine)
-                    with Session() as session:
-                        for rec in sentiment_records:
-                            sentiment = SentimentData(
-                                ticker=rec["ticker"],
-                                date=rec["date"],
-                                sentiment=rec["sentiment"],
-                                num_articles=rec["num_articles"]
-                            )
-                            session.add(sentiment)
-                        session.commit()
-                    
-                    results["sentiment_records"] = len(sentiment_records)
-                    logger.info(f"✅ Saved {len(sentiment_records)} sentiment records for {ticker}")
-                    
-    except Exception as e:
-        logger.warning(f"Failed to fetch sentiment for {ticker}: {e}")
-    
-    logger.info(f"✅ Hybrid ingestion complete for {ticker}: {results['price_records']} prices, {results['sentiment_records']} sentiment days")
-    return results
 
 
 
@@ -642,37 +462,19 @@ async def ingest_bulk_history(data_dir: str = None) -> dict:
                 results["failed"].append(ticker)
                 continue
             
-            # Prepare data for insertion
-            stock_prices = []
-            for _, row in df.iterrows():
-                stock_prices.append({
-                    "ticker": ticker,
-                    "timestamp": row['date'],
-                    "open": float(row['open']),
-                    "high": float(row['high']),
-                    "low": float(row['low']),
-                    "close": float(row['close']),
-                    "volume": float(row['volume']) if pd.notna(row['volume']) else 0.0
-                })
+            # Prepare data and bulk upsert
+            stock_prices = [{
+                "ticker": ticker,
+                "timestamp": row['date'],
+                "open": float(row['open']),
+                "high": float(row['high']),
+                "low": float(row['low']),
+                "close": float(row['close']),
+                "volume": float(row['volume']) if pd.notna(row['volume']) else 0.0
+            } for _, row in df.iterrows()]
             
-            # Bulk upsert in batches to avoid PostgreSQL's 32767 parameter limit
-            BATCH_SIZE = 1000
             async with AsyncSessionLocal() as session:
-                for batch_start in range(0, len(stock_prices), BATCH_SIZE):
-                    batch = stock_prices[batch_start:batch_start + BATCH_SIZE]
-                    stmt = insert(StockPrice).values(batch)
-                    stmt = stmt.on_conflict_do_update(
-                        index_elements=[StockPrice.ticker, StockPrice.timestamp],
-                        set_={
-                            "open": stmt.excluded.open,
-                            "high": stmt.excluded.high,
-                            "low": stmt.excluded.low,
-                            "close": stmt.excluded.close,
-                            "volume": stmt.excluded.volume
-                        }
-                    )
-                    await session.execute(stmt)
-                await session.commit()
+                await bulk_upsert_stock_prices(session, stock_prices)
             
             results["success"] += 1
             

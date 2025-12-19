@@ -24,6 +24,8 @@ class ModelInfo:
     description: str
     reasoning: str
     training_notes: str
+    input_dim: Optional[int] = None
+    window_size: Optional[int] = None
     is_available: bool = False
 
 
@@ -47,7 +49,9 @@ MODEL_REGISTRY: Dict[str, ModelInfo] = {
         - Better at vetoing bad trades
         - Down accuracy ~53% (higher than up accuracy)
         """,
-        training_notes="Overall acc: 52.6%, Bias: -23.7% (bearish). Trained on 528 stocks, 1.7M samples."
+        training_notes="Overall acc: 52.6%, Bias: -23.7% (bearish). Trained on 528 stocks, 1.7M samples.",
+        input_dim=41,
+        window_size=60
     ),
     "v6": ModelInfo(
         version="v6",

@@ -8,7 +8,9 @@ import asyncio
 import asyncpg
 import os
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:password@timescaledb:5432/stock_db")
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise ValueError("DATABASE_URL environment variable must be set")
 
 # Convert to asyncpg format
 DB_URL = DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://")

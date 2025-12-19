@@ -4,7 +4,7 @@ import { X, AlertTriangle, Info, AlertCircle } from 'lucide-react';
 
 // ====== EDIT THIS TEXT EASILY ======
 const BANNER_CONFIG = {
-  enabled: true,
+  enabled: false,
   message: "🚧 System Processing Historical Data - UI may be slow",
   type: "warning" as "info" | "warning" | "error"
 };
@@ -40,15 +40,17 @@ export default function DisclaimerBanner() {
   const Icon = style.icon;
 
   return (
-    <div className={`${style.bg} border-b ${style.border} px-4 py-2 flex items-center justify-between animate-fade-in`}>
+    <div role="alert" className={`${style.bg} border-b ${style.border} px-4 py-2 flex items-center justify-between animate-fade-in`}>
       <div className={`flex items-center gap-2 ${style.text} text-sm`}>
         <Icon size={16} className="flex-shrink-0" />
         <span>{BANNER_CONFIG.message}</span>
       </div>
       <button
+        type="button"
         onClick={() => setDismissed(true)}
         className={`${style.text} hover:text-white transition-colors`}
         title="Dismiss"
+        aria-label="Dismiss banner"
       >
         <X size={16} />
       </button>

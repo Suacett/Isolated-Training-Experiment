@@ -4,35 +4,15 @@ This guide explains how to train and use the full 39-feature LSTM model with leg
 
 ## Overview
 
-The model has been upgraded through multiple versions. The latest is V7 with BiLSTM + Attention:
+### Model Hierarchy & Evolution
 
-**V9 Model (12 Features) - STATE OF THE ART:**
-- **Architecture**: Transformer Encoder (2 layers, 4 heads, d_model=64)
-- **Goal**: Cross-sectional Ranking (Who will outperform?)
-- **Features**: Strictly stationary (Log returns, RSI, MACD, Volume Ratio, Rel Strength)
-- **Target**: Percentile Rank (0.0 - 1.0) of 5-day return
-- **Universe**: Full S&P 500 (~500 stocks)
+The system maintains multiple models for different trading strategies:
 
-**V7 Model (41 Features) - STABLE:**
-- BiLSTM: Bidirectional LSTM for forward/backward context
-- Multi-Head Attention: 4 heads to learn which timesteps matter most
-- DirectionalLoss: Penalizes wrong-sign predictions
-- 41 features including 4 market context features
+1.  **V9 (Transformer-Rank)**: **PRIMARY / STATE OF THE ART**. Uses a Transformer architecture to predict relative performance across the S&P 500. Best for long/short portfolio construction.
+2.  **V7 (BiLSTM-Attention)**: **STABLE / DIRECTIONAL**. Uses temporal attention to predict price targets with high directional accuracy. Best for individual stock entry/exit timing.
+3.  **V6-V2 (Legacy LSTM)**: Baseline models primarily used for regression testing and comparative analysis.
 
-**Legacy Models (37 Features):**
-
-**39 Features:**
-- **Log Returns (5)**: Yesterday's OHLCV log returns
-- **Moving Averages (5)**: MA10, MA20, MA30, EMA10, EMA30
-- **Time Features (3)**: Day of week, day of month, month number
-- **Technical Indicators (5)**: RSI, MACD, MACD Signal, Bollinger Bands
-- **Volatility (6)**: Multiple time horizons (5d, 10d, 20d, 30d)
-- **Volume Indicators (2)**: OBV, Abnormal Volume
-- **Price Patterns (5)**: Z-Score, overnight gap, momentum, skewness, intraday range
-- **Insider Trading (3)**: Shares, amount, buy/sell flag (from SEC Form 4)
-- **Sentiment (3)**: News sentiment score, article count, sentiment change
-
-**4 Prediction Horizons:**
+**4 Prediction Horizons (V7 & Legacy):**
 - `Target_1d`: 1 day ahead
 - `Target_1w`: 5 days (1 week) ahead
 - `Target_1m`: 21 days (1 month) ahead
@@ -113,6 +93,9 @@ Look for:
 - "Training Complete!"
 - Final validation loss
 - Model saved confirmation
+
+### Production Selection
+By default, `bootstrap.py` auto-resolves the highest versioned model found in `/app/models`. If `transformer_v9.pth` and `scaler_v9.pkl` exist, the system boots in **V9 (Ranking) mode**. If only V7 files exist, it uses **V7 (Directional) mode**.
 
 ## Using the Trained Model
 
@@ -337,8 +320,6 @@ const predictions = await fetch(`/api/predictions/${ticker}`).then(r => r.json()
 ### Issue: "SEC EDGAR rate limiting"
 **Solution:** Insider data collection is slow (SEC rate limits). Cache results in database.
 
-### Issue: "Alpha Vantage API limit"
-**Solution:** Free tier allows 5 calls/minute. Sentiment collection sleeps 12s between requests.
 
 ## Accuracy Benchmarks
 
