@@ -1,15 +1,16 @@
 import os
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker, declarative_base
-from sqlalchemy import Column, String, Float, DateTime, select, desc, Integer, delete, Boolean
+from sqlalchemy import Column, String, Float, DateTime, select, desc, Integer, delete, Boolean, UniqueConstraint
 from sqlalchemy.dialects.postgresql import insert
 from datetime import datetime
-
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:password@timescaledb:5432/stock_db")
+from config.settings import DATABASE_URL, PAPER_SESSION_ID
+from config.constants import INITIAL_PORTFOLIO_CASH, DEFAULT_REBALANCE_DAYS
 
 engine = create_async_engine(DATABASE_URL, echo=False)
 AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 Base = declarative_base()
+
 
 class StockPrice(Base):
     __tablename__ = "stock_prices"
@@ -27,7 +28,7 @@ class Watchlist(Base):
     __tablename__ = "watchlist"
     __table_args__ = {'extend_existing': True}
     ticker = Column(String, primary_key=True)
-    is_favorite = Column(Boolean, default=True)  # Favorites get Alpha Vantage calls
+    is_favorite = Column(Boolean, default=False)  # Favorites get Alpha Vantage calls
     added_at = Column(DateTime, default=datetime.now)
 
 class Prediction(Base):
@@ -73,6 +74,63 @@ class CachedIntrinsicValue(Base):
     eps = Column(Float)
     growth_rate = Column(Float)
     bond_yield = Column(Float)
+
+class PaperPortfolio(Base):
+    __tablename__ = "paper_portfolio"
+    __table_args__ = {'extend_existing': True}
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(String, unique=True, nullable=False)
+    cash_balance = Column(Float, default=INITIAL_PORTFOLIO_CASH)
+    equity_value = Column(Float, default=0.0)
+    total_value = Column(Float, default=INITIAL_PORTFOLIO_CASH)
+    days_since_rebalance = Column(Integer, default=DEFAULT_REBALANCE_DAYS)
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+class PaperPortfolioHistory(Base):
+    __tablename__ = "paper_portfolio_history"
+    __table_args__ = {'extend_existing': True}
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(String, nullable=False)
+    date = Column(DateTime, nullable=False)
+    total_value = Column(Float, nullable=False)
+    equity_value = Column(Float, nullable=False)
+    cash_balance = Column(Float, nullable=False)
+    created_at = Column(DateTime, default=datetime.now)
+
+class PaperHolding(Base):
+    __tablename__ = "paper_holdings"
+    __table_args__ = (
+        UniqueConstraint('session_id', 'ticker', name='uq_holding_session_ticker'),
+        {'extend_existing': True}
+    )
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(String, nullable=False)
+    ticker = Column(String, nullable=False)
+    entry_price = Column(Float, nullable=False)
+    quantity = Column(Float, nullable=False)
+    current_price = Column(Float, nullable=False)
+    stop_loss_level = Column(Float, nullable=False)
+    highest_price = Column(Float, nullable=False)
+    entry_date = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+class PaperTrade(Base):
+    __tablename__ = "paper_trades"
+    __table_args__ = {'extend_existing': True}
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(String, nullable=False)
+    trade_date = Column(DateTime, nullable=False)
+    action = Column(String, nullable=False)
+    ticker = Column(String, nullable=False)
+    price = Column(Float, nullable=False)
+    quantity = Column(Float, nullable=False)
+    reason = Column(String, nullable=False)
+    profit_loss = Column(Float, nullable=True)
 
 async def get_latest_close(ticker: str):
     async with AsyncSessionLocal() as session:
@@ -213,6 +271,14 @@ async def get_watchlist_with_favorites():
         items = result.scalars().all()
         return [{"ticker": item.ticker, "is_favorite": item.is_favorite} for item in items]
 
+async def get_watchlist_item(ticker: str):
+    """Get a single watchlist item by ticker"""
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Watchlist).where(Watchlist.ticker == ticker)
+        )
+        return result.scalar_one_or_none()
+
 async def save_prediction(
     ticker: str,
     prediction_date: datetime,
@@ -334,3 +400,59 @@ async def delete_stock_data(ticker: str):
         await session.execute(delete(InsiderTrade).where(InsiderTrade.ticker == ticker))
         await session.execute(delete(SentimentData).where(SentimentData.ticker == ticker))
         await session.commit()
+
+async def bulk_upsert_stock_prices(session, stock_prices: list[dict]):
+    """
+    Unified bulk upsert for stock prices to avoid code redundancy.
+    Handles PostgreSQL's parameter limit (32767) by batching.
+    """
+    if not stock_prices:
+        return
+        
+    BATCH_SIZE = 1000  # 1000 rows * 7 columns = 7000 parameters (well under limit)
+    
+    for i in range(0, len(stock_prices), BATCH_SIZE):
+        batch = stock_prices[i:i + BATCH_SIZE]
+        stmt = insert(StockPrice).values(batch)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[StockPrice.ticker, StockPrice.timestamp],
+            set_={
+                "open": stmt.excluded.open,
+                "high": stmt.excluded.high,
+                "low": stmt.excluded.low,
+                "close": stmt.excluded.close,
+                "volume": stmt.excluded.volume
+            }
+        )
+        await session.execute(stmt)
+    await session.commit()
+
+async def init_db():
+    """Initialize database tables"""
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+
+async def atomic_update_highest_price(session_id: str, ticker: str, new_price: float):
+    """
+    Atomically update highest_price using GREATEST() to prevent race conditions.
+    
+    This ensures that even if two processes try to update at the same time,
+    the highest value always wins (Phase 1.1 fix).
+    """
+    from sqlalchemy import text
+    
+    async with AsyncSessionLocal() as session:
+        await session.execute(
+            text("""
+                UPDATE paper_holdings 
+                SET highest_price = GREATEST(highest_price, :new_price),
+                    current_price = :new_price,
+                    updated_at = NOW()
+                WHERE session_id = :session_id AND ticker = :ticker
+            """),
+            {"session_id": session_id, "ticker": ticker, "new_price": new_price}
+        )
+        await session.commit()
+
+

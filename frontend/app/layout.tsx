@@ -1,21 +1,32 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Inter, Space_Grotesk, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { ToastProvider } from "./components/Toast";
+import Navbar from "./components/Navbar";
+import DisclaimerBanner from "./components/DisclaimerBanner";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+// Minimalist Dark Design System Fonts
+const inter = Inter({
+  variable: "--font-inter",
   subsets: ["latin"],
+  display: "swap",
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const spaceGrotesk = Space_Grotesk({
+  variable: "--font-space-grotesk",
   subsets: ["latin"],
+  display: "swap",
+});
+
+const jetbrainsMono = JetBrains_Mono({
+  variable: "--font-jetbrains-mono",
+  subsets: ["latin"],
+  display: "swap",
 });
 
 export const metadata: Metadata = {
   title: "Stock AI Dashboard",
-  description: "AI-powered stock prediction dashboard",
+  description: "AI-powered stock prediction dashboard with LSTM neural networks",
 };
 
 export default function RootLayout({
@@ -24,12 +35,15 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning className="dark">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        className={`${inter.variable} ${spaceGrotesk.variable} ${jetbrainsMono.variable} font-sans antialiased bg-[#0A0A0F] text-[#FAFAFA]`}
         suppressHydrationWarning={true}
       >
         <ToastProvider>
+          {/* Global Navigation */}
+          <Navbar />
+          <DisclaimerBanner />
           {children}
         </ToastProvider>
       </body>

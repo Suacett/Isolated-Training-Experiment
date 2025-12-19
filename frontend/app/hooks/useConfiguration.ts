@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { getApiUrl } from "@/config/api";
 
 export type DataSource = "alpaca" | "alpha_vantage";
 
@@ -58,7 +59,7 @@ export function useConfiguration(onSuccess?: () => void) {
                 payload.ALPHA_VANTAGE_KEY = state.alphaVantageKey;
             }
 
-            const res = await fetch("http://localhost:8000/settings/keys", {
+            const res = await fetch(getApiUrl("/settings/keys"), {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",

@@ -1,14 +1,86 @@
 import logging
 import numpy as np
+import torch
 from fastapi import APIRouter, HTTPException
-from services.db import get_historical_data, get_predictions_for_ticker
+from services.db import get_historical_data, get_predictions_for_ticker, get_latest_close, get_watchlist_item
 from services.intrinsic import IntrinsicCalculator
+from services.risk_management import get_regime_exposure
 from datetime import datetime
 import pandas as pd
+from typing import List, Optional
+from pydantic import BaseModel
+from services.feature_engineering_v9 import (
+    compute_v9_features,
+    process_spy_data,
+    process_vix_data,
+    get_v9_feature_names,
+)
 from state import state
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+@router.get("/market-status")
+async def get_market_status():
+    """
+    Get current market regime status (Bull, Bear, Crisis) based on SPY trend and VIX.
+    """
+    try:
+        # Phase 1.2: Use cached SPY/VIX data if available (1-hour TTL)
+        spy_data = state.get_spy_cache()
+        if spy_data is None:
+            spy_data = await get_historical_data("SPY", limit=300)
+            if spy_data:
+                state.set_spy_cache(spy_data)
+        
+        vix_data = state.get_vix_cache()
+        if vix_data is None:
+            vix_data = await get_historical_data("^VIX", limit=50)
+            # fallback if ^VIX not found (Yahoo often uses ^VIX)
+            if not vix_data:
+                vix_data = await get_historical_data("VIX", limit=50)
+            if vix_data:
+                state.set_vix_cache(vix_data)
+
+        current_date = pd.Timestamp.now()
+        
+        # Prepare DataFrames
+        spy_df = pd.DataFrame([{
+            "date": d.timestamp,
+            "close": d.close
+        } for d in spy_data]) if spy_data else pd.DataFrame()
+        
+        vix_df = pd.DataFrame([{
+            "date": d.timestamp,
+            "close": d.close
+        } for d in vix_data]) if vix_data else None
+        
+        if spy_df.empty:
+            return {
+                "regime": "Unknown",
+                "exposure": 1.0,
+                "vix": None,
+                "details": "Insufficient SPY data"
+            }
+            
+        exposure, regime_label = get_regime_exposure(spy_df, vix_df, current_date)
+        
+        current_vix = vix_df['close'].iloc[-1] if vix_df is not None and not vix_df.empty else None
+        
+        return {
+            "regime": regime_label,
+            "exposure": exposure,
+            "vix": current_vix,
+            "timestamp": current_date.isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Error fetching market status: {e}")
+        return {
+            "regime": "Error",
+            "exposure": 1.0, 
+            "error": str(e)
+        }
 
 
 @router.get("/dashboard/{ticker}")
@@ -53,50 +125,113 @@ async def get_dashboard_data(ticker: str):
         for pred in predictions:
             # Convert target_date to date string (YYYY-MM-DD)
             target_date_str = pred.target_date.date().isoformat()
-            # Convert log return to predicted price: predicted_price = current_price * exp(log_return)
+            # Convert log return to predicted price: predicted_price = current_price * np.exp(pred.predicted_value)
             predicted_price = pred.current_price * np.exp(pred.predicted_value)
             prediction_lookup[target_date_str] = predicted_price
 
-        # Calculate intrinsic value (once per ticker, only if Alpha Vantage is enabled)
+        # Check V9
+        is_v9_model = state.lstm_model is not None and type(state.lstm_model).__name__ == "TransformerRankModel"
+        current_rank = None
+        
+        if is_v9_model:
+            # For V9, we don't predict prices for the graph, we just get the current rank
+            # Fetch macro data for feature engineering
+            try:
+                 # Fetch macro data
+                spy_hist = await get_historical_data("SPY", limit=500)
+                vix_hist = await get_historical_data("^VIX", limit=500)
+                if not vix_hist:
+                     vix_hist = await get_historical_data("VIX", limit=500)
+                
+                spy_data_v9 = None
+                vix_data_v9 = None
+
+                if spy_hist:
+                    spy_df = pd.DataFrame([{
+                        "date": d.timestamp, "open": d.open, "high": d.high, "low": d.low, "close": d.close, "volume": d.volume
+                    } for d in spy_hist])
+                    spy_data_v9 = process_spy_data(spy_df)
+                    
+                if vix_hist:
+                    vix_df = pd.DataFrame([{
+                        "date": d.timestamp, "open": d.open, "high": d.high, "low": d.low, "close": d.close, "volume": d.volume
+                    } for d in vix_hist])
+                    vix_data_v9 = process_vix_data(vix_df)
+                    
+                # Process features for current ticker
+                df = pd.DataFrame([{
+                    "date": d.timestamp, "open": d.open, "high": d.high, "low": d.low, "close": d.close, "volume": d.volume
+                } for d in historical_data])
+                
+                processed_df = compute_v9_features(df, spy_data_v9, vix_data_v9)
+                v9_min_len = 60
+                
+                if len(processed_df) >= v9_min_len:
+                     v9_features = get_v9_feature_names()
+                     # Get last window
+                     window_seq = processed_df.iloc[-v9_min_len:][v9_features].values
+                     
+                     if state.scaler:
+                         window_seq = state.scaler.transform(window_seq)
+                         
+                     input_tensor = torch.tensor(window_seq, dtype=torch.float32).unsqueeze(0)
+                     rank_score = state.lstm_model.predict(input_tensor).item()
+                     current_rank = rank_score * 100
+                     
+            except Exception as e:
+                logger.error(f"V9 Rank calc failed in detail view: {e}")
+
+        # Calculate intrinsic value (once per ticker, only if Alpha Vantage is enabled AND ticker is favorite)
         # Note: This may be slow as it fetches EPS data from Alpha Vantage
         # Returns None if calculation fails to avoid destroying graph scale
         intrinsic_value = None
         intrinsic_breakdown = None
         if state.alpha_vantage_enabled:
-            try:
-                intrinsic_calc = IntrinsicCalculator()
-                intrinsic_value = await intrinsic_calc.calculate(ticker, use_live_bond_yield=True)
-                
-                # Get breakdown for tooltip
-                intrinsic_breakdown = {
-                    "eps": intrinsic_calc.last_eps,
-                    "growth_rate": intrinsic_calc.last_growth_rate,
-                    "bond_yield": intrinsic_calc.last_bond_yield,
-                    "intrinsic_value": intrinsic_value,
-                    "is_estimated": intrinsic_calc.is_estimated
-                }
+            # Only calculate for favorite tickers to conserve API limits
+            watchlist_item = await get_watchlist_item(ticker)
+            if watchlist_item and watchlist_item.is_favorite:
+                try:
+                    intrinsic_calc = IntrinsicCalculator()
+                    intrinsic_value = await intrinsic_calc.calculate(ticker, use_live_bond_yield=True)
 
-                if intrinsic_value is None:
-                    logger.warning(f"Intrinsic value calculation returned None for {ticker} - will not plot on chart")
-                elif intrinsic_value <= 0:
-                    logger.warning(f"Intrinsic value calculation returned invalid value for {ticker}: {intrinsic_value} - setting to None")
+                    # Get breakdown for tooltip
+                    intrinsic_breakdown = {
+                        "eps": intrinsic_calc.last_eps,
+                        "growth_rate": intrinsic_calc.last_growth_rate,
+                        "bond_yield": intrinsic_calc.last_bond_yield,
+                        "intrinsic_value": intrinsic_value,
+                        "is_estimated": intrinsic_calc.is_estimated
+                    }
+
+                    if intrinsic_value is None:
+                        logger.warning(f"Intrinsic value calculation returned None for {ticker} - will not plot on chart")
+                    elif intrinsic_value <= 0:
+                        logger.warning(f"Intrinsic value calculation returned invalid value for {ticker}: {intrinsic_value} - setting to None")
+                        intrinsic_value = None
+                except Exception as e:
+                    logger.warning(f"Failed to calculate intrinsic value for {ticker}: {e} - setting to None")
                     intrinsic_value = None
-            except Exception as e:
-                logger.warning(f"Failed to calculate intrinsic value for {ticker}: {e} - setting to None")
-                intrinsic_value = None
+            else:
+                logger.debug(f"Skipping intrinsic value for {ticker} (not marked as favorite)")
         else:
             logger.debug(f"Skipping intrinsic value calculation for {ticker} (Alpha Vantage disabled)")
 
         # Fetch SPY data for comparison (if ticker is not SPY itself)
+        # Phase 1.2: Use cached SPY data when available
         spy_lookup = {}
         if ticker.upper() != "SPY":
             try:
-                spy_data = await get_historical_data("SPY", limit=5000)
+                spy_data = state.get_spy_cache()
+                if spy_data is None:
+                    spy_data = await get_historical_data("SPY", limit=5000)
+                    if spy_data:
+                        state.set_spy_cache(spy_data)
+                
                 if spy_data:
                     for sp in spy_data:
                         date_str = sp.timestamp.date().isoformat()
                         spy_lookup[date_str] = float(sp.close)
-                    logger.info(f"Loaded {len(spy_lookup)} SPY data points for comparison")
+                    logger.debug(f"Loaded {len(spy_lookup)} SPY data points for comparison (cached)")
             except Exception as e:
                 logger.warning(f"Failed to fetch SPY data for comparison: {e}")
 
@@ -122,10 +257,71 @@ async def get_dashboard_data(ticker: str):
                 "spy_close": spy_close
             })
 
-        return {"history": history, "intrinsic_breakdown": intrinsic_breakdown}
+        return {"history": history, "intrinsic_breakdown": intrinsic_breakdown, "rank": current_rank}
 
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error fetching dashboard data for {ticker}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# DashboardItem model removed as it was unused and creating confusion.
+# If needed in future, ensure it matches the dict structure below.
+
+
+@router.get("/dashboard", response_model=List[dict])
+async def get_dashboard_summary():
+    """
+    Get summary of all watchlist stocks for the dashboard/scanner.
+    """
+    from services.db import get_watchlist_with_favorites
+    
+    try:
+        watchlist_items = await get_watchlist_with_favorites()
+        summary = []
+        
+        for item in watchlist_items:
+            ticker = item["ticker"]
+            is_favorite = item["is_favorite"]
+            
+            # Fetch latest data
+            current_price = await get_latest_close(ticker)
+            if current_price is None:
+                continue
+                
+            # Fetch prediction (1d)
+            preds = await get_predictions_for_ticker(ticker, horizon="1d", limit=1)
+            prediction = None
+            signal = "NEUTRAL"
+            accuracy = False
+            
+            if preds:
+                pred = preds[0]
+                # Convert log return to price
+                prediction = current_price * np.exp(pred.predicted_value)
+                
+                # Determine signal
+                if prediction > current_price * 1.01:
+                    signal = "BUY"
+                elif prediction < current_price * 0.99:
+                    signal = "SELL"
+                    
+                # Accuracy logic removed until properly implemented
+                # accuracy = check_historical_accuracy...
+            
+            summary.append({
+                "ticker": ticker,
+                "current_price": current_price,
+                "prediction": prediction,
+                "signal": signal,
+                "intrinsic_value": None, # Loading this for all might be too slow
+                "source": "AI",
+                "is_favorite": is_favorite
+            })
+            
+        return summary
+        
+    except Exception as e:
+        logger.error(f"Error fetching dashboard summary: {e}")
         raise HTTPException(status_code=500, detail=str(e))

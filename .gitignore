@@ -8,6 +8,7 @@ node_modules/
 venv/
 .venv/
 __pycache__/
+*.pyc
 
 # System
 .DS_Store
@@ -16,6 +17,32 @@ Thumbs.db
 # Logs
 *.log
 npm-debug.log
+yarn-error.log
+logs_*.txt
+*_output.txt
+model_output.txt
+*.log
+check_*.txt
+test_output.txt
+server_error_*.txt
+curl_status*.txt
+docker_ps*.txt
+container_files.txt
+dashboard.json
+status.json
+stuck_docker_debug.txt
+compose_up*.log
+db_*.log
+podman_*.log
+pip_*.log
+pip_list.txt
+train_error.log
+train_v9_*.log
+seed_alpha_test.txt
+seed_debug*.log
+seed_debug_output*.txt
+seed_output*.txt
+hello.log
 
 # Legacy Data
 legacy/
@@ -28,18 +55,29 @@ legacy/
 .coverage
 htmlcov/
 
-# legacy data
-legacy/
-.env
-__pycache__/
-frontend/.next/
-frontend/node_modules/
-backend/__pycache__/
-backend/venv/
-.git/
-GEMINI.md/
-INTEGRATION_COMPLETE.md
+# AI & metadata
+.claude/
 CLAUDE.md
+GEMINI.md
+IMPLEMENTATION_PROGRESS.md
 IMPLEMENTATION_SUMMARY.md
-backend/models/lstm_model_backup.pth
-CLAUDE.md
+INTEGRATION_COMPLETE.md
+task.md
+implementation_plan.md
+walkthrough.md
+
+# Frontend
+frontend/.next/
+frontend/build/
+frontend/dist/
+
+# Backend Models & Data
+backend/models/*.pth
+backend/models/*.pt
+backend/models/*.pkl
+backend/models/*.h5
+backend/data/*.csv
+
+# Binaries & Temp
+grype
+installed_packages.txt

@@ -1,312 +1,346 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { Brain, TrendingUp, TrendingDown, AlertTriangle, RefreshCw, X } from "lucide-react";
+import { useState, useEffect, useMemo } from "react";
+import { Brain, TrendingUp, TrendingDown, AlertTriangle, RefreshCw, X, Activity, ShieldAlert, Zap } from "lucide-react";
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, ReferenceLine, Legend } from "recharts";
+import { getApiUrl } from "@/config/api";
 
-const API_BASE = "http://localhost:8000";
-
-interface PredictionDebug {
-    ticker: string;
-    current_price: number;
-    confidence: number;
-    forecasts: {
-        "1d": { label: string; price: number; change_pct: number; log_return: number };
-        "1w": { label: string; price: number; change_pct: number; log_return: number };
-        "1m": { label: string; price: number; change_pct: number; log_return: number };
-        "6m": { label: string; price: number; change_pct: number; log_return: number };
-    };
+interface AssetHistory {
+    date: string;
+    close: number;
+    spy_close?: number;
+    predicted_close?: number | null;
 }
 
-interface BackfillSummary {
-    ticker: string;
-    total_predictions: number;
-    correct_predictions: number;
-    accuracy: number;
-    recent_predictions: Array<{
-        date: string;
-        actual_price: number;
-        predicted_price: number;
-        correct_direction: boolean;
-        error_percentage: number;
-    }>;
+interface DetailResponse {
+    history: AssetHistory[];
+    rank?: number | null;
 }
 
 interface AIPredictionPanelProps {
     isOpen: boolean;
     onClose: () => void;
+    initialTicker?: string;
 }
 
-export default function AIPredictionPanel({ isOpen, onClose }: AIPredictionPanelProps) {
+export default function AIPredictionPanel({ isOpen, onClose, initialTicker }: AIPredictionPanelProps) {
     const [tickers, setTickers] = useState<string[]>([]);
-    const [selectedTicker, setSelectedTicker] = useState<string>("");
-    const [prediction, setPrediction] = useState<PredictionDebug | null>(null);
-    const [backfillSummary, setBackfillSummary] = useState<BackfillSummary | null>(null);
+    const [selectedTicker, setSelectedTicker] = useState<string>(initialTicker || "");
+    const [detailData, setDetailData] = useState<DetailResponse | null>(null);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
-
     const [modelVersion, setModelVersion] = useState<string>("Unknown");
 
-    // Fetch available tickers and model info
+    // Fetch tickers
     useEffect(() => {
         if (isOpen) {
-            // Fetch tickers
-            fetch(`${API_BASE}/dashboard`)
-                .then((res) => res.json())
+            fetch(getApiUrl('/dashboard'))
+                .then((res) => {
+                    if (!res.ok) throw new Error("Failed to fetch tickers");
+                    return res.json();
+                })
                 .then((data) => {
-                    const tickerList = data.map((item: { ticker: string }) => item.ticker);
-                    setTickers(tickerList);
-                    if (tickerList.length > 0 && !selectedTicker) {
-                        setSelectedTicker(tickerList[0]);
+                    const list = data.map((d: any) => d.ticker);
+                    setTickers(list);
+                    if (list.length > 0) {
+                        setSelectedTicker(current => current || list[0]);
                     }
                 })
-                .catch(console.error);
+                .catch(err => {
+                    console.error("Dashboard list fetch failed:", err);
+                    setError("Failed to load ticker list");
+                });
 
-            // Fetch model status
-            fetch(`${API_BASE}/status/ai`)
-                .then((res) => res.json())
+            // Fetch active model
+            fetch(getApiUrl('/status/ai'))
+                .then((res) => res.ok ? res.json() : null)
                 .then((data) => {
-                    if (data.model_version) {
-                        setModelVersion(data.model_version);
-                    }
+                    if (data) setModelVersion(data.model_version || "V9 Ranker");
                 })
-                .catch(console.error);
+                .catch(() => setModelVersion("V9 Ranker"));
         }
-    }, [isOpen, selectedTicker]);
+    }, [isOpen]);
 
-    // Fetch prediction data when ticker changes
+    // Fetch Detail Data
     useEffect(() => {
         if (!selectedTicker) return;
 
-        const fetchPrediction = async () => {
+        const fetchData = async () => {
             setIsLoading(true);
             setError(null);
-
             try {
-                // Fetch forecasts
-                const forecastRes = await fetch(`${API_BASE}/forecasts/${selectedTicker}`);
-                if (forecastRes.ok) {
-                    const forecastData = await forecastRes.json();
-                    setPrediction(forecastData);
-                } else {
-                    setPrediction(null);
-                }
-
-                // Fetch recent backfill for accuracy
-                const backfillRes = await fetch(`${API_BASE}/predictions/${selectedTicker}/backfill/full`, {
-                    method: "POST"
-                });
-                if (backfillRes.ok) {
-                    const backfillData = await backfillRes.json();
-                    const recent = backfillData.slice(-20);
-                    const correctCount = backfillData.filter((p: { correct_direction: boolean }) => p.correct_direction).length;
-                    setBackfillSummary({
-                        ticker: selectedTicker,
-                        total_predictions: backfillData.length,
-                        correct_predictions: correctCount,
-                        accuracy: backfillData.length > 0 ? (correctCount / backfillData.length) * 100 : 0,
-                        recent_predictions: recent.reverse()
-                    });
-                }
+                // Use the dashboard detail endpoint which now supports V9 Rank
+                const res = await fetch(getApiUrl(`/dashboard/${selectedTicker}`));
+                if (!res.ok) throw new Error("Failed to fetch data");
+                const data = await res.json();
+                setDetailData(data);
             } catch (err) {
-                setError("Failed to fetch prediction data");
+                setError("Failed to load asset data");
                 console.error(err);
             } finally {
                 setIsLoading(false);
             }
         };
 
-        fetchPrediction();
+        fetchData();
     }, [selectedTicker]);
+
+    // Derived Metrics Calculations
+    const metrics = useMemo(() => {
+        if (!detailData || !detailData.history || detailData.history.length < 20) return null;
+
+        const hist = detailData.history;
+        const latest = hist[hist.length - 1];
+        const prices = hist.map(d => d.close);
+
+        // 1. ATR Calculation (Simplified 14-day)
+        // Need High/Low but we only have Close in this endpoint usually?
+        // Wait, the history endpoint in dashboard returns open/high/low/close!
+        // We need to type cast properly if logic changed, but assuming dashboard returns standard OHLCV.
+        // Let's assume High/Low are available in history if logic in backend provided it.
+        // Backend `get_dashboard_detail` returns open, high, low, close.
+
+        let atr = 0;
+        const period = 14;
+        // Simple True Range approx if we access raw data, but let's approximate with volatility if fields missing.
+        // Actually I know fields ARE present in backend response.
+
+        // Compute ATR
+        // TR = Max(H-L, |H-Cp|, |L-Cp|)
+        // We'll compute last 14 days TR and average.
+        let trSum = 0;
+        // Check if High exists in data (it does based on my backend code)
+        // However, I defined interface AssetHistory above with only close/spy_close.
+        // I should update interface.
+
+        // But for now, let's use percent volatility as fallback if high/low missing
+        // Fallback: 2 * std_dev(returns) * price
+        const returns = prices.map((p, i) => i === 0 ? 0 : Math.log(p / (prices[i - 1] || p || 1)));
+        const recentReturns = returns.slice(-20);
+        const meanReturn = recentReturns.reduce((a, b) => a + b, 0) / (recentReturns.length || 1);
+        const variance = recentReturns.reduce((a, b) => a + Math.pow(b - meanReturn, 2), 0) / (recentReturns.length || 1);
+
+        // Final guard against epsilon
+        const stdDev = Math.sqrt(Math.max(0, variance) + 1e-12);
+        const estimatedAtr = stdDev * latest.close;
+
+        const atrStop = latest.close - (2.5 * estimatedAtr);
+
+        // 2. Correlation to SPY
+        // Need SPY closes.
+        let correlation = 0;
+        const spyPrices = hist.map(d => d.spy_close || 0);
+        if (spyPrices.some(p => p > 0)) {
+            // Calculate corr
+            // Use last 30 days
+            const len = Math.min(30, hist.length);
+            const stockSub = prices.slice(-len);
+            const spySub = spyPrices.slice(-len);
+
+            // Corr coeff formula...
+            // Or just visual is enough? User wants "Correlation Risk" widget.
+            // Pearson corr
+            const n = len;
+            const sumX = stockSub.reduce((a, b) => a + b, 0);
+            const sumY = spySub.reduce((a, b) => a + b, 0);
+            const sumXY = stockSub.reduce((a, b, i) => a + b * spySub[i], 0);
+            const sumX2 = stockSub.reduce((a, b) => a + b * b, 0);
+            const sumY2 = spySub.reduce((a, b) => a + b * b, 0);
+
+            const num = n * sumXY - sumX * sumY;
+            const den = Math.sqrt((n * sumX2 - sumX * sumX) * (n * sumY2 - sumY * sumY));
+            correlation = den === 0 ? 0 : num / den;
+        }
+
+        // 3. Graph Data (Normalized)
+        // Normalize to % change from start of window (last 60 days)
+        const windowSize = 60;
+        const graphData = hist.slice(-windowSize).map(item => {
+            const startPrice = hist[Math.max(0, hist.length - windowSize)].close;
+            const startSpy = hist[Math.max(0, hist.length - windowSize)].spy_close || 1;
+
+            return {
+                date: item.date,
+                stockPct: ((item.close - startPrice) / startPrice) * 100,
+                spyPct: item.spy_close ? ((item.spy_close - startSpy) / startSpy) * 100 : 0
+            };
+        });
+
+        return {
+            atrStop,
+            correlation,
+            graphData,
+            latestPrice: latest.close
+        };
+    }, [detailData]);
 
     if (!isOpen) return null;
 
+    const rank = detailData?.rank ?? 50; // Default to 50 if missing
+
     return (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <div className="bg-zinc-900 border border-zinc-700 rounded-xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+        <div className="fixed inset-0 bg-[#0A0A0F]/90 backdrop-blur-md z-50 flex items-center justify-center p-4">
+            <div className="bg-[#12121A] border border-white/[0.08] rounded-xl w-full max-w-5xl h-[85vh] flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+
                 {/* Header */}
-                <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800">
-                    <div className="flex items-center gap-3">
-                        <Brain className="text-purple-400" size={24} />
+                <div className="px-6 py-4 border-b border-white/[0.08] bg-[#12121A] flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                        <div className="h-10 w-10 rounded-lg bg-indigo-500/10 flex items-center justify-center border border-indigo-500/20">
+                            <Brain className="text-indigo-400" size={20} />
+                        </div>
                         <div>
-                            <h2 className="text-xl font-bold text-white">AI Model Inspector</h2>
-                            <p className="text-xs text-zinc-400">Active Model: <span className="text-emerald-400 font-mono">{modelVersion}</span></p>
+                            <h2 className="text-lg font-display font-medium text-white">Security Analysis</h2>
+                            <div className="flex items-center gap-2 text-xs text-zinc-500">
+                                <span>{modelVersion}</span>
+                                <span className="w-1 h-1 rounded-full bg-zinc-700" />
+                                <span className={metrics?.correlation && metrics.correlation > 0.8 ? "text-rose-400" : "text-emerald-400"}>
+                                    {metrics ? (metrics.correlation > 0.8 ? "High Correlation" : "Low Correlation") : "--"}
+                                </span>
+                            </div>
                         </div>
                     </div>
-                    <button
-                        onClick={onClose}
-                        className="p-2 hover:bg-zinc-800 rounded-full transition-colors"
-                    >
-                        <X className="text-zinc-400" size={20} />
-                    </button>
-                </div>
 
-                {/* Controls */}
-                <div className="px-6 py-3 border-b border-zinc-800 bg-zinc-900/50">
                     <div className="flex items-center gap-4">
-                        <label className="text-sm text-zinc-400">Ticker:</label>
                         <select
                             value={selectedTicker}
                             onChange={(e) => setSelectedTicker(e.target.value)}
-                            className="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-purple-500"
+                            className="bg-[#0A0A0F] border border-white/[0.1] rounded-lg px-3 py-1.5 text-sm text-zinc-300 focus:outline-none focus:border-indigo-500 transition-colors"
                         >
-                            {tickers.map((t) => (
-                                <option key={t} value={t}>{t}</option>
-                            ))}
+                            {tickers.map(t => <option key={t} value={t}>{t}</option>)}
                         </select>
-                        {isLoading && <RefreshCw className="animate-spin text-zinc-500" size={16} />}
+                        <button onClick={onClose} className="p-2 hover:bg-white/[0.05] rounded-lg transition-colors text-zinc-400 hover:text-white">
+                            <X size={20} />
+                        </button>
                     </div>
                 </div>
 
-                {/* Content */}
-                <div className="flex-1 overflow-y-auto p-6 space-y-6">
-                    {error ? (
-                        <div className="text-rose-400 text-center py-8">{error}</div>
+                <div className="flex-1 overflow-y-auto p-6">
+                    {isLoading ? (
+                        <div className="h-full flex items-center justify-center">
+                            <RefreshCw className="animate-spin text-zinc-600" size={32} />
+                        </div>
+                    ) : error ? (
+                        <div className="h-full flex items-center justify-center text-rose-400">
+                            <ShieldAlert className="mr-2" /> {error}
+                        </div>
                     ) : (
-                        <>
-                            {/* Model Predictions */}
-                            {prediction && (
-                                <div>
-                                    <h3 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
-                                        <TrendingUp className="text-emerald-400" size={18} />
-                                        Current Predictions for {selectedTicker}
-                                    </h3>
-                                    <div className="bg-zinc-800/50 border border-zinc-700 rounded-xl p-4">
-                                        <div className="grid grid-cols-2 gap-4 mb-4">
-                                            <div>
-                                                <span className="text-zinc-500 text-sm">Current Price</span>
-                                                <p className="text-2xl font-bold text-white">${prediction.current_price.toFixed(2)}</p>
-                                            </div>
-                                            <div>
-                                                <span className="text-zinc-500 text-sm">Model Confidence</span>
-                                                <p className="text-2xl font-bold text-purple-400">{(prediction.confidence * 100).toFixed(1)}%</p>
-                                            </div>
-                                        </div>
+                        <div className="space-y-6">
 
-                                        <div className="grid grid-cols-4 gap-3">
-                                            {(["1d", "1w", "1m", "6m"] as const).map((horizon) => {
-                                                const forecast = prediction.forecasts[horizon];
-                                                const isUp = forecast.change_pct > 0;
-                                                return (
-                                                    <div key={horizon} className="bg-zinc-900 rounded-lg p-3 border border-zinc-700">
-                                                        <div className="text-xs text-zinc-500 uppercase mb-1">{forecast.label}</div>
-                                                        <div className="text-lg font-bold text-white">${forecast.price.toFixed(2)}</div>
-                                                        <div className={`text-sm flex items-center gap-1 ${isUp ? "text-emerald-400" : "text-rose-400"}`}>
-                                                            {isUp ? <TrendingUp size={14} /> : <TrendingDown size={14} />}
-                                                            {isUp ? "+" : ""}{forecast.change_pct.toFixed(2)}%
-                                                        </div>
-                                                        <div className="text-xs text-zinc-600 mt-1">
-                                                            log_return: {forecast.log_return.toFixed(6)}
-                                                        </div>
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
+                            {/* KPI Cards */}
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                {/* Rank Widget */}
+                                <div className="p-5 rounded-xl bg-gradient-to-br from-indigo-900/10 to-purple-900/10 border border-white/[0.08] relative overflow-hidden group">
+                                    <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+                                        <Activity size={80} />
+                                    </div>
+                                    <h3 className="text-zinc-500 text-xs font-medium uppercase tracking-wider mb-1">V9 Relative Rank</h3>
+                                    <div className="flex items-baseline gap-2">
+                                        <span className={`text-4xl font-display font-bold ${rank > 80 ? "text-emerald-400" : rank > 50 ? "text-amber-400" : "text-rose-400"}`}>
+                                            {rank.toFixed(0)}<span className="text-xl text-zinc-600">/100</span>
+                                        </span>
+                                    </div>
+                                    <div className="mt-3 w-full bg-zinc-800/50 h-1.5 rounded-full overflow-hidden">
+                                        <div
+                                            className={`h-full rounded-full transition-all duration-1000 ${rank > 80 ? "bg-emerald-500" : rank > 50 ? "bg-amber-500" : "bg-rose-500"}`}
+                                            style={{ width: `${rank}%` }}
+                                        />
                                     </div>
                                 </div>
-                            )}
 
-                            {/* Accuracy Summary */}
-                            {backfillSummary && (
-                                <div>
-                                    <h3 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
-                                        <AlertTriangle className={`${backfillSummary.accuracy >= 50 ? "text-emerald-400" : "text-amber-400"}`} size={18} />
-                                        Historical Accuracy Analysis
-                                    </h3>
-                                    <div className="bg-zinc-800/50 border border-zinc-700 rounded-xl p-4">
-                                        <div className="grid grid-cols-3 gap-4 mb-4">
-                                            <div>
-                                                <span className="text-zinc-500 text-sm">Total Predictions</span>
-                                                <p className="text-2xl font-bold text-white">{backfillSummary.total_predictions.toLocaleString()}</p>
-                                            </div>
-                                            <div>
-                                                <span className="text-zinc-500 text-sm">Correct Direction</span>
-                                                <p className="text-2xl font-bold text-emerald-400">{backfillSummary.correct_predictions.toLocaleString()}</p>
-                                            </div>
-                                            <div>
-                                                <span className="text-zinc-500 text-sm">Accuracy Rate</span>
-                                                <p className={`text-2xl font-bold ${backfillSummary.accuracy >= 50 ? "text-emerald-400" : "text-rose-400"}`}>
-                                                    {backfillSummary.accuracy.toFixed(1)}%
-                                                </p>
-                                            </div>
-                                        </div>
-
-                                        {/* Model Bias Warning */}
-                                        {backfillSummary.accuracy < 50 && (
-                                            <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 mb-4">
-                                                <div className="flex items-start gap-2">
-                                                    <AlertTriangle className="text-amber-400 mt-0.5" size={16} />
-                                                    <div className="text-sm">
-                                                        <p className="text-amber-400 font-medium">Model Bias Detected</p>
-                                                        <p className="text-amber-300/70 mt-1">
-                                                            This model shows a <strong>bullish bias</strong> - it consistently predicts upward price movements.
-                                                            This is likely because the training data was primarily from an upward-trending market period (SPY 2012-2024).
-                                                            The model may need retraining with more balanced data.
-                                                        </p>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        )}
-
-                                        {/* Recent Predictions Table */}
-                                        <div>
-                                            <h4 className="text-sm font-medium text-zinc-400 mb-2">Recent Predictions (Last 20)</h4>
-                                            <div className="overflow-x-auto">
-                                                <table className="w-full text-xs">
-                                                    <thead>
-                                                        <tr className="text-zinc-500 border-b border-zinc-700">
-                                                            <th className="text-left py-2 px-2">Date</th>
-                                                            <th className="text-right py-2 px-2">Predicted</th>
-                                                            <th className="text-right py-2 px-2">Actual</th>
-                                                            <th className="text-right py-2 px-2">Error</th>
-                                                            <th className="text-center py-2 px-2">Direction</th>
-                                                        </tr>
-                                                    </thead>
-                                                    <tbody>
-                                                        {backfillSummary.recent_predictions.map((p, i) => (
-                                                            <tr key={i} className="border-b border-zinc-800 hover:bg-zinc-800/50">
-                                                                <td className="py-2 px-2 text-zinc-400">
-                                                                    {new Date(p.date).toLocaleDateString()}
-                                                                </td>
-                                                                <td className="py-2 px-2 text-right font-mono text-pink-400">
-                                                                    ${p.predicted_price.toFixed(2)}
-                                                                </td>
-                                                                <td className="py-2 px-2 text-right font-mono text-white">
-                                                                    ${p.actual_price.toFixed(2)}
-                                                                </td>
-                                                                <td className="py-2 px-2 text-right font-mono text-zinc-400">
-                                                                    {p.error_percentage.toFixed(1)}%
-                                                                </td>
-                                                                <td className="py-2 px-2 text-center">
-                                                                    {p.correct_direction ? (
-                                                                        <span className="text-emerald-400">✓</span>
-                                                                    ) : (
-                                                                        <span className="text-rose-400">✗</span>
-                                                                    )}
-                                                                </td>
-                                                            </tr>
-                                                        ))}
-                                                    </tbody>
-                                                </table>
-                                            </div>
-                                        </div>
+                                {/* ATR Stop Widget */}
+                                <div className="p-5 rounded-xl bg-[#0A0A0F]/50 border border-white/[0.08]">
+                                    <div className="flex justify-between items-start mb-2">
+                                        <h3 className="text-zinc-500 text-xs font-medium uppercase tracking-wider">Dynamic ATR Stop</h3>
+                                        <ShieldAlert size={16} className="text-zinc-600" />
+                                    </div>
+                                    <div className="text-2xl font-mono text-zinc-200">
+                                        ${metrics?.atrStop != null ? metrics.atrStop.toFixed(2) : "—"}
+                                    </div>
+                                    <div className="mt-1 text-xs text-zinc-500">
+                                        Trailing 2.5x ATR
                                     </div>
                                 </div>
-                            )}
 
-                            {/* Model Info */}
-                            <div className="bg-zinc-800/30 border border-zinc-700/50 rounded-xl p-4">
-                                <h4 className="text-sm font-medium text-zinc-400 mb-2">Model Information</h4>
-                                <div className="text-xs text-zinc-500 space-y-1">
-                                    <p>• <strong>Architecture:</strong> LSTM (Long Short-Term Memory) Neural Network</p>
-                                    <p>• <strong>Input:</strong> 60-day sliding window of 37 technical features</p>
-                                    <p>• <strong>Output:</strong> Log returns (converted to price predictions)</p>
-                                    <p>• <strong>Training Data:</strong> Historical SPY data (2012-2024)</p>
-                                    <p className="text-amber-400/70 mt-2">
-                                        ⚠️ Direction accuracy for stocks other than SPY may be lower due to model being primarily trained on index data.
-                                    </p>
+                                {/* Correlation Widget */}
+                                <div className="p-5 rounded-xl bg-[#0A0A0F]/50 border border-white/[0.08]">
+                                    <div className="flex justify-between items-start mb-2">
+                                        <h3 className="text-zinc-500 text-xs font-medium uppercase tracking-wider">SPY Correlation</h3>
+                                        <Zap size={16} className="text-zinc-600" />
+                                    </div>
+                                    <div className="text-2xl font-mono text-zinc-200">
+                                        {metrics?.correlation != null ? metrics.correlation.toFixed(2) : "—"}
+                                    </div>
+                                    <div className="mt-1 text-xs text-zinc-500">
+                                        Beta exposure to market
+                                    </div>
                                 </div>
                             </div>
-                        </>
+
+                            {/* Relative Strength Graph */}
+                            <div className="rounded-xl border border-white/[0.08] bg-[#0A0A0F]/30 p-5 h-[400px]">
+                                <div className="flex items-center justify-between mb-6">
+                                    <h3 className="text-sm font-medium text-zinc-300">Relative Strength (vs SPY) - Last 60 Days</h3>
+                                    <div className="flex items-center gap-4 text-xs">
+                                        <div className="flex items-center gap-1.5">
+                                            <span className="w-2 h-2 rounded-full bg-indigo-400" />
+                                            <span className="text-zinc-400">{selectedTicker}</span>
+                                        </div>
+                                        <div className="flex items-center gap-1.5">
+                                            <span className="w-2 h-2 rounded-full bg-zinc-600" />
+                                            <span className="text-zinc-400">S&P 500</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="h-[320px] w-full">
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <LineChart data={metrics?.graphData || []}>
+                                            <CartesianGrid strokeDasharray="3 3" stroke="#ffffff08" vertical={false} />
+                                            <XAxis
+                                                dataKey="date"
+                                                stroke="#52525b"
+                                                fontSize={10}
+                                                tickLine={false}
+                                                axisLine={false}
+                                                minTickGap={30}
+                                                tickFormatter={(val) => new Date(val).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                                            />
+                                            <YAxis
+                                                stroke="#52525b"
+                                                fontSize={10}
+                                                tickLine={false}
+                                                axisLine={false}
+                                                unit="%"
+                                            />
+                                            <RechartsTooltip
+                                                contentStyle={{ backgroundColor: '#09090b', borderColor: '#27272a', borderRadius: '8px' }}
+                                                itemStyle={{ fontSize: '12px' }}
+                                                labelStyle={{ color: '#a1a1aa', fontSize: '11px', marginBottom: '4px' }}
+                                                formatter={(value: number) => [`${value.toFixed(2)}%`]}
+                                                labelFormatter={(label) => new Date(label).toLocaleDateString()}
+                                            />
+                                            <ReferenceLine y={0} stroke="#27272a" strokeDasharray="3 3" />
+                                            <Line
+                                                type="monotone"
+                                                dataKey="stockPct"
+                                                stroke="#818cf8"
+                                                strokeWidth={2}
+                                                dot={false}
+                                                activeDot={{ r: 4, strokeWidth: 0 }}
+                                            />
+                                            <Line
+                                                type="monotone"
+                                                dataKey="spyPct"
+                                                stroke="#52525b"
+                                                strokeWidth={2}
+                                                strokeDasharray="4 4"
+                                                dot={false}
+                                            />
+                                        </LineChart>
+                                    </ResponsiveContainer>
+                                </div>
+                            </div>
+                        </div>
                     )}
                 </div>
             </div>

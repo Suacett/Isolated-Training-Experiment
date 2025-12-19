@@ -15,20 +15,34 @@ import os
 
 logger = logging.getLogger(__name__)
 
+# Import key pool for multi-key Alpha Vantage support
+try:
+    from services.alpha_vantage_pool import key_pool
+except ImportError:
+    key_pool = None
+
 
 class SentimentDataCollector:
     """Collects sentiment data from Alpha Vantage News API"""
 
     def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key or os.getenv("ALPHA_VANTAGE_KEY")
+        # Allow override with explicit key, otherwise use key pool if available
+        self.api_key = api_key
         self.base_url = "https://www.alphavantage.co/query"
         self.rate_limit_delay = 12  # Alpha Vantage free tier: 5 calls/minute
+        self.use_key_pool = key_pool is not None and key_pool.get_key_count() > 0
 
     def _get_api_key(self) -> Optional[str]:
-        """Get API key from environment or config"""
+        """Get API key from key pool (with rotation) or fallback to settings"""
+        # If explicit key was provided, use it
         if self.api_key:
             return self.api_key
 
+        # Try key pool first (supports multiple keys with automatic rotation)
+        if self.use_key_pool:
+            return key_pool.get_key()
+
+        # Fallback to settings object for backwards compatibility
         try:
             from utils.config_loader import settings
             return settings.get("ALPHA_VANTAGE_KEY")
@@ -235,6 +249,58 @@ class SentimentDataCollector:
             return combined
         else:
             return new_data
+
+    async def fetch_bulk_sentiment(
+        self,
+        tickers: list,
+        days: int = 7
+    ) -> dict:
+        """
+        Fetch sentiment for multiple tickers efficiently.
+
+        With key pool (5 keys), rotational usage avoids rate limits, but execution remains sequential.
+
+        Args:
+            tickers: List of ticker symbols
+            days: Number of days to fetch sentiment for (default: 7)
+
+        Returns:
+            Dict mapping ticker -> {sentiment_score, num_articles, last_updated}
+        """
+        results = {}
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=days)
+
+        for ticker in tickers:
+            try:
+                result = await self.fetch_sentiment_range(ticker, start_date, end_date)
+
+                if not result.empty:
+                    # Get most recent sentiment
+                    latest = result.iloc[-1]
+                    results[ticker] = {
+                        "sentiment": float(latest['sentiment']),
+                        "num_articles": int(latest['num_articles']),
+                        "last_updated": str(latest['date'])
+                    }
+                else:
+                    # No data available
+                    results[ticker] = {
+                        "sentiment": 0.0,
+                        "num_articles": 0,
+                        "last_updated": None
+                    }
+
+            except Exception as e:
+                logger.warning(f"Failed to fetch sentiment for {ticker}: {e}")
+                results[ticker] = {
+                    "sentiment": None,
+                    "num_articles": 0,
+                    "last_updated": None,
+                    "error": str(e)
+                }
+
+        return results
 
 
 # Global instance

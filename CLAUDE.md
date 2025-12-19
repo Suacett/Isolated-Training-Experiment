@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Proxmox AI Stock Predictor - A GPU-accelerated stock/crypto prediction platform using PyTorch LSTM models, FastAPI backend, Next.js frontend, and TimescaleDB for time-series storage. Data sourced from Alpaca Markets API.
+Proxmox AI Stock Predictor - A GPU-accelerated stock/crypto prediction platform featuring multiple ML architectures (LSTM, Transformer, V9 ensemble), FastAPI backend, Next.js frontend, and TimescaleDB for time-series storage. Integrates Yahoo Finance (primary data source), Alpha Vantage (price + fundamentals fallback), and Alpaca Markets API (trading/paper-trading execution only — not the primary data source unless explicitly configured as an optional secondary data source). Includes paper trading, portfolio stress testing, and real-time prediction generation.
 
 ## Commands
 
@@ -56,23 +56,31 @@ npm run lint     # ESLint
 ### Data Flow
 ```
 Yahoo Finance (Primary) → YahooFinanceClient → TimescaleDB → FastAPI → Next.js Dashboard
-       ↓ (Fallback)                                              ↑
-Alpaca Markets API                                Alpha Vantage (Sentiment/EPS - favorites only)
+       ↓ (Price/Fundamentals Fallback)                          ↑
+Alpha Vantage                                            Alpha Vantage (Sentiment/EPS - favorites only)
+(Alpaca: Trading/Execution Only)
 ```
 
 ### Backend Services (`backend/services/`)
 - **data_ingest.py**: `YahooFinanceClient` (primary) and `AlpacaDataClient` (fallback) fetch OHLCV data, auto-detects crypto vs stocks
 - **lstm_model.py**: PyTorch model (Conv1D → BatchNorm → MC Dropout → LSTM → Dense). 60-day input, 37 features, 4-step forecast
-- **intrinsic.py**: Graham formula intrinsic value calculation
-- **db.py**: SQLAlchemy async models (`StockPrice`, `Watchlist`, `Prediction`, `InsiderTrade`, `SentimentData`)
+- **lstm_model_v7.py**: V7 Attention model (BiLSTM → Multi-Head Attention → Dense). 60-day input, 41 features, 4-step forecast
+- **lstm_model_v8_class.py**: V8 Classification model for directional predictions with attention mechanisms
+- **transformer_model.py**: V9 Transformer encoder for relative strength ranking. Input: 60-day, 12 features → rank (0-1)
 - **feature_engineering.py**: Computes 37 technical features from OHLCV + insider + sentiment data
+- **feature_engineering_v9.py**: V9-specific 12-feature set optimized for ranking (macro/micro features, volatility indicators, momentum)
+- **intrinsic.py**: Graham formula intrinsic value calculation
+- **db.py**: SQLAlchemy async models (`StockPrice`, `Watchlist`, `Prediction`, `InsiderTrade`, `SentimentData`, `PaperTrade`)
 - **insider_data.py**: SEC Form 4 scraper for insider trading data
 - **sentiment_data.py**: Alpha Vantage News API for sentiment analysis
+- **risk_management.py**: Portfolio stress testing, volatility analysis, risk metrics calculation
 - **scaler.py**: StandardScaler wrapper for feature normalization
 - **training.py**: Complete training pipeline using legacy data
 - **reconciliation.py**: Grades past predictions against actual market data for accuracy tracking
 - **model_loader.py**: Multi-model loader with VRAM → RAM fallback for Model Playground
 - **model_metadata.py**: Model version registry and metadata management
+- **device_utils.py**: Dynamic GPU/CPU device detection and management
+- **alpha_vantage_pool.py**: Multi-key Alpha Vantage API pool for rate-limit distribution
 
 ### Signal Logic
 ```python
@@ -88,7 +96,7 @@ HOLD: otherwise
 - **DetailDrawer**: Detailed chart/analysis view
 
 ### API Routes (`backend/routers/`)
-- **stocks.py**:
+- **stocks.py**: Watchlist management
   - `GET /stocks/` - List all watchlist tickers
   - `GET /stocks/with-favorites` - List tickers with favorite status
   - `GET /stocks/favorites` - List only favorite tickers
@@ -96,27 +104,38 @@ HOLD: otherwise
   - `POST /stocks/` - Add ticker with Yahoo Finance validation and hybrid data ingestion
   - `PATCH /stocks/{ticker}/favorite` - Toggle favorite status
   - `DELETE /stocks/{ticker}?cascade=bool` - Remove ticker (optionally cascade delete all data)
-- **dashboard.py**:
+- **dashboard.py**: Dashboard data and visualization
   - `GET /dashboard/{ticker}` - Historical data with predictions, intrinsic value, SPY comparison (up to 5000 points)
-- **backtest.py**:
+- **backtest.py**: Historical backtesting
   - `POST /backtest/all?days=N` - Generate historical predictions for all tickers
   - `POST /backtest/{ticker}?days=N` - Generate historical predictions for chart visualization
-- **ingestion.py**:
+- **ingestion.py**: Data fetching
   - `POST /ingest/all` - Fetch data for all watchlist tickers and generate predictions
-- **predictions.py**:
+- **predictions.py**: Prediction history
   - `GET /predictions/{ticker}` - Get prediction history for a ticker
   - `GET /predictions/{ticker}/stats` - Get prediction accuracy statistics
   - `GET /predictions/pending/validate` - Get predictions needing validation
+- **forecasts.py**: Multi-horizon forecasts
+  - `GET /forecasts/{ticker}` - Multi-horizon AI predictions (1d, 1w, 1m, 6m)
+- **playground.py**: Model comparison
+  - `POST /playground/compare` - Compare predictions across multiple model versions
+- **paper.py**: Paper trading status and history
+  - `GET /paper/status` - Summary of paper trading (holdings, equity, stats)
+  - `GET /paper/history` - Historical equity curve
+  - `GET /paper/trades` - Trade history
+- **portfolio_comparison.py**: Portfolio Laboratory / Stress testing
+  - `GET /paper/portfolios/compare` - Compare metrics of lab scenarios
+  - `GET /paper/portfolios/{sessionId}/history` - Historical data for specific lab scenario
 
 ### Utility Modules (`backend/utils/`)
 - **config_loader.py**: Load/save API keys and settings from `secrets.json`
 
 ### Training Scripts (`backend/scripts/`)
-- **train_model_v6.py**: RECOMMENDED - Train with all stocks, 128 hidden units, clean data
-- **train_model_v5.py**: Train with all stocks, 64 hidden units
-- **train_model_v4.py**: Train with 200 stocks (may OOM on low RAM)
-- **train_model_v3.py**: Train with 100 stocks
-- **train_model_legacy.py**: Original 31 stocks training script
+- **seed_multi_portfolio.py**: LABORATORY - Populates multiple stress-test scenarios (2005-2024). Recommended: `--all`.
+- **seed_paper_history.py**: Populates 1-year of random paper trading history for dashboard testing.
+- **train_model_v9.py**: Train the production Transformer model.
+- **train_model_v7.py**: RECOMMENDED (Price) - Train with BiLSTM + Attention, 41 features, DirectionalLoss
+- **train_model_v6.py**: Train with all stocks, 128 hidden units, clean data
 - **check_gpu.py**: Verify CUDA availability
 - **init_db.py**: Initialize database schema
 - **clean_db.py**: Database maintenance utilities
@@ -208,15 +227,52 @@ Hot reload is enabled via Docker volume mappings.
 
 ### Training Scripts
 
-Multiple training scripts are available with different trade-offs:
+Multiple training scripts are available with different architectures:
 
-| Script | Stocks | Memory | Speed | Use Case |
-|--------|--------|--------|-------|----------|
-| `train_model_v6.py` | **ALL** | **Streaming** | Med | **RECOMMENDED - Clean data & bigger model** |
-| `train_model_v5.py` | ALL | Streaming | Med | Previous version (smaller model) |
-| `train_model_v4.py` | 200 | ~8GB | Med | RAM-based, may OOM |
+| Script | Architecture | Stocks | Memory | Task | Status |
+|--------|--------------|--------|--------|------|--------|
+| `train_model_v9.py` | Transformer Encoder | ALL | **Streaming** | **Relative Strength Ranking** | **ACTIVE (Production)** |
+| `train_model_v7.py` | BiLSTM + Attention | ALL | Streaming | Price Prediction (4-step) | Previous |
+| `train_model_v6.py` | LSTM (128 units) | ALL | Streaming | Price Prediction | Archive |
+| `train_model_v5.py` | LSTM (64 units) | ALL | Streaming | Price Prediction | Archive |
+| `train_model_v4.py` | LSTM (32 units) | 200 | ~8GB | Price Prediction | Archive |
 
-### Maximum Data Training (v6) - RECOMMENDED
+### V9 Transformer Ranking Model - PRODUCTION (ACTIVE)
+
+```bash
+# Fetch training data (59 tickers: indices, sectors, top stocks)
+docker exec proxmox_stock_backend python -m scripts.fetch_training_data
+
+# Train V9 model (Transformer Encoder, relative strength ranking)
+docker exec proxmox_stock_backend python -m scripts.train_model_v9
+
+# After training, activate (already default in main.py):
+docker exec proxmox_stock_backend cp /app/models/transformer_v9.pth /app/models/transformer_v9.pth
+docker compose restart backend
+```
+
+**V9 Architecture:**
+- **Transformer Encoder**: Self-attention over 60-day window to learn macro trends
+- **Input**: 12 features optimized for ranking (macro: market momentum, volatility; micro: RSI, volatility, price patterns)
+- **Output**: Relative strength rank 0.0-1.0 (0=worst performer, 1=best performer next 5 days)
+- **Parallel Computation**: Much faster training than LSTM (no sequential dependencies)
+- **Positional Encoding**: Sine/cosine encoding ensures model knows temporal position of each day
+- **Global Mean Pooling**: Aggregates 60-day attention into single rank prediction
+- **No Scaler**: Outputs normalized rank directly (unlike V7 which predicts price)
+
+**V9 Advantages Over V7:**
+- Rankings are relative (compares stock to market) vs absolute price predictions
+- Trains faster with parallel attention (no LSTM sequential constraint)
+- 12 optimized features vs 41 (cleaner signal)
+- Direct portfolio construction: sort by rank and long top N
+- Paper trading integration: automatic daily sync and rebalancing
+
+**Scheduled Execution:**
+- Runs daily at 4:30 PM EST (market close) via APScheduler
+- Updates paper trading portfolio with new rankings
+- See `main.py:run_daily_paper_trading()` for schedule config
+
+### V6 Clean Data Training (Previous)
 
 ```bash
 # Train with ALL stocks, ALL history (recommended for best accuracy)
@@ -282,6 +338,21 @@ docker compose restart backend
 - `1m`: 21 days ahead
 - `6m`: 126 days ahead
 
+### V7 Architecture (41 Features)
+
+**Additional Features (V7 only):**
+- `high_52w_dist_lag1`: Distance from 52-week high (lagged)
+- `market_momentum_lag1`: 20-day momentum (lagged)
+- `vix_proxy`: Realized volatility as VIX proxy
+- `regime_volatility`: High/low volatility regime classifier
+
+**Architecture:**
+- BiLSTM: 2 layers, 128 hidden units, bidirectional
+- Multi-Head Attention: 4 heads on temporal dimension
+- Residual connections for gradient flow
+- Gradient checkpointing for memory efficiency
+- CPU offload support for large batches
+
 ### Multi-API Key Support (Alpha Vantage)
 
 For EPS/sentiment data, supports multiple keys with automatic rotation:
@@ -299,6 +370,60 @@ Each key provides 5 calls/minute. Multiple keys multiply throughput.
 - **Feature Consistency**: Inference must use exact same features as training
 - **Data Sources**: Training uses database data; production uses Yahoo (primary) + Alpaca (fallback)
 - **GPU**: RTX 4080 Super (16GB) recommended for v4 training
+
+---
+
+## Paper Trading (V9 Integration)
+
+Paper trading automatically executes daily at market close (4:30 PM EST) using V9 Transformer rankings.
+
+### How It Works
+1. **V9 Inference**: Transformer scores all watchlist tickers (0.0-1.0 rank)
+2. **Portfolio Construction**: Long top 10 performers (highest rank)
+3. **Rebalancing**: Daily sync - sell bottom performers, buy new top performers
+4. **Tracking**: All trades logged with entry/exit prices, P&L calculated
+5. **Stress Testing**: Portfolio stress tested under volatility scenarios
+
+### Configuration
+- Located in `backend/config/paper_trading_config.json` (git-ignored)
+- Controlled via `PAPER_TRADING_ENABLED` in environment
+- Schedule defined in `main.py:APScheduler` with CronTrigger (weekdays 4:30 PM)
+
+### Database
+- `PaperTrade` model tracks all trades with timestamps and P&L
+- Holdings calculated from latest open trades
+- Sync endpoint: `GET /paper/sync` refreshes prices and calculates current value
+
+### Risk Management Features
+- **Volatility Ranking**: V9 includes volatility indicators in ranking
+- **Drawdown Limits**: Can add max drawdown constraints (future)
+- **Sector Concentration**: Monitor sector allocation of top 10
+- **Stress Testing**: Scenario analysis under -10%, -20%, -30% market moves
+
+---
+
+## Risk Management & Stress Testing
+
+Portfolio stress testing (`backend/services/risk_management.py`) simulates portfolio P&L under adverse market conditions.
+
+### Stress Scenarios
+1. **Market Crash**: -10%, -20%, -30% parallel shift
+2. **Volatility Spike**: 2x historical volatility
+3. **Sector Rotation**: Uncorrelated sector moves
+4. **Dividend Cut**: 50% dividend yield shock
+
+### Metrics Calculated
+- **Value at Risk (VaR)**: 95% confidence loss estimate
+- **Expected Shortfall**: Mean loss in tail scenarios
+- **Sharpe Ratio**: Risk-adjusted returns
+- **Correlation**: Cross-holding diversification
+
+### API Endpoint
+```python
+POST /portfolio/stress-test
+Input: list of holdings with quantities
+Output: Portfolio P&L under each scenario
+```
 
 ---
 
@@ -343,15 +468,16 @@ model_loader.disable()
 
 The DetailDrawer (`frontend/app/components/DetailDrawer.tsx`) provides detailed AI prediction visualization.
 
-### Current Features (2025-12-06)
+### Current Features (2025-12-11)
 - **Forecast Cards**: Yesterday's result, Tomorrow, 1 Week, 1 Month, 6 Month predictions
 - **Interactive Chart**: Multi-line with Price, AI Prediction, S&P 500, Intrinsic Value
 - **View Modes**: Chart vs Table toggle
 - **Percentage Mode**: Compare stock vs S&P 500 performance
 - **Line Toggles**: Show/hide individual chart lines
-- **Time Ranges**: 1M, 3M, 6M, 1Y, ALL (currently missing 1D, 1W)
+- **Time Ranges**: 1W, 1M, 3M, 6M, 1Y, 5Y, ALL
 - **Accuracy Stream**: Clickable bars showing daily prediction accuracy
 - **Detail Modal**: Click any bar/row to see prediction details
+- **Downsampling**: Automatic 500-point limit for performance with large datasets
 
 ### Backend Integration
 - `GET /dashboard/{ticker}` - Historical data with predictions, intrinsic value, SPY comparison
@@ -359,21 +485,66 @@ The DetailDrawer (`frontend/app/components/DetailDrawer.tsx`) provides detailed 
 
 ---
 
-## Outstanding Issues (TODO)
+## Design System (Minimalist Dark)
 
-### DetailDrawer Issues
-1. **Performance**: Graph laggy with ALL data (5000+ points) - reduce limit or downsample
-2. **Missing Time Ranges**: Add 1D (1 day) and 1W (1 week) options
-3. **Info Bubbles Blocked**: Forecast card tooltips cut off - fix z-index/overflow
-4. **More Prediction Details Needed**:
-   - Show expected % movement (not just price)
-   - Explain confidence score meaning
-   - Explain intrinsic value calculation
-   - Show error rate distribution
-5. **Model Loading Timing**: "No models loaded" errors appear during startup before models finish loading
+The frontend uses a "Minimalist Dark" design system with:
 
-### Sync Button Issue
-- Settings "Sync All" button may be broken - needs investigation
+### Color Palette
+- **Background**: `#0A0A0F` (deep slate)
+- **Background Alt**: `#12121A` (headers, modals)
+- **Muted**: `#1A1A24` (cards, inputs)
+- **Accent**: `#F59E0B` (warm amber - primary accent)
+- **Border**: `rgba(255,255,255,0.08)` (subtle borders)
 
-### API Errors
-- Some tickers getting 400 errors due to model loading timing (should resolve after startup completes)
+### Typography
+- **Display**: Space Grotesk (headings)
+- **Body**: Inter (UI text)
+- **Mono**: JetBrains Mono (prices, data)
+
+### Effects
+- Glass card effect with backdrop blur
+- Amber glow on hover for interactive elements
+- Scale-in and slide-in animations for modals
+
+---
+
+## API Routers
+
+Backend endpoints are organized into routers (`backend/routers/`):
+- **stocks.py**: Watchlist management, favorites
+- **dashboard.py**: Historical data, predictions
+- **ingestion.py**: Data fetching from external APIs
+- **predictions.py**: Prediction history and stats
+- **backtest.py**: Historical prediction generation
+- **forecasts.py**: Multi-horizon AI forecasts
+- **playground.py**: Model Playground for comparing multiple models
+
+---
+
+## Current Status (2025-12-15)
+
+### Active Production Features
+- ✅ **V9 Transformer Ranking Model**: Live inference and paper trading (*Frontend Visualization Pending*)
+- ✅ **Paper Trading**: Automated daily execution at 4:30 PM EST (*UI Enhancements in Phase 1.3 Pending*)
+- ✅ **Portfolio Stress Testing**: Scenario analysis under adverse markets
+- ✅ **V8 Classification Model**: Directional prediction with attention
+- ✅ **Multi-Router Architecture**: Modular endpoint organization
+- ✅ **SmartTooltip System**: Consolidated info display across UI
+- ✅ **Real-time P&L Tracking**: Paper trading P&L updates on sync
+
+### Git Branch Status
+- **Current Branch**: `Refactor-test`
+- **Main Branch**: `dev-branch`
+- **Recent Commits**: Refactored tooltips, V9 ranking tests, portfolio stress test, V9 Transformer features
+
+### Model Versions Available
+- **V9**: Transformer Encoder (production, relative strength ranking)
+- **V8**: LSTM Classification (directional prediction)
+- **V7**: BiLSTM + Attention (price prediction, historical)
+- **V6-V3**: Legacy LSTM variants (archive)
+
+### Data Pipeline
+- **Primary**: Yahoo Finance (OHLCV)
+- **Fallback**: Alpaca Markets API
+- **Fundamentals**: Alpha Vantage (EPS, sentiment - favorites only)
+- **Cache**: PostgreSQL + TimescaleDB with daily incremental updates

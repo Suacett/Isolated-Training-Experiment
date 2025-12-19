@@ -1,415 +1,503 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
-import SetupModal from "./components/SetupModal";
-import AddAssetBar from "./components/AddAssetBar";
-import AssetTable, { Asset } from "./components/AssetTable";
-import DetailDrawer from "./components/DetailDrawer";
-import LogViewer from "./components/LogViewer";
-import DeleteConfirmationModal from "./components/DeleteConfirmationModal";
-import BrowseStocksModal from "./components/BrowseStocksModal";
-import { useToast } from "./components/Toast";
-import AIPredictionPanel from "./components/AIPredictionPanel";
-import ModelPlayground from "./components/ModelPlayground";
-import { RefreshCw, Settings, Terminal, Brain, FlaskConical, Grid, Star } from "lucide-react";
+import React, { useState, useEffect } from "react";
+import { ArrowUpRight, ArrowDownRight, Wallet, TrendingUp, DollarSign, Percent, Unlock, AlertTriangle, Info, FileText, Activity } from "lucide-react";
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, AreaChart, Area } from "recharts";
+import { clsx, type ClassValue } from "clsx";
+import { twMerge } from "tailwind-merge";
+import Link from "next/link";
+import SmartTooltip from "./components/SmartTooltip";
+import { getApiUrl } from "@/config/api";
 
-const API_BASE = "http://localhost:8000";
+function cn(...inputs: ClassValue[]) {
+  return twMerge(clsx(inputs));
+}
 
-// API response types
-interface DashboardItem {
+// --- Types ---
+
+interface PortfolioSummary {
+  session_id: string;
+  cash_balance: number;
+  equity_value: number;
+  total_value: number;
+  days_since_rebalance: number;
+  daily_pnl?: number;
+  daily_pnl_pct?: number;
+  sharpe_ratio?: number;
+  alpha?: number;
+}
+
+interface Holding {
   ticker: string;
+  quantity: number;
+  entry_price: number;
   current_price: number;
-  prediction: number;
-  signal: string;
-  intrinsic_value?: number;
-  accuracy?: boolean;
-  source?: string;
-  is_favorite?: boolean;
+  stop_loss_level: number;
+  profit_pct: number;
+  value: number;
 }
 
-interface WatchlistItem {
+interface Trade {
+  date: string;
+  action: string;
   ticker: string;
-  is_favorite: boolean;
+  price: number;
+  quantity: number;
+  reason: string;
+  profit_loss?: number;
 }
+
+interface EquityPoint {
+  date: string;
+  value: number;
+  equity: number;
+  cash: number;
+}
+
+// Time range options
+const TIME_RANGES = [
+  { key: "1W", label: "1W", days: 7 },
+  { key: "1M", label: "1M", days: 30 },
+  { key: "3M", label: "3M", days: 90 },
+  { key: "6M", label: "6M", days: 180 },
+  { key: "1Y", label: "1Y", days: 365 },
+  { key: "5Y", label: "5Y", days: 1825 },
+] as const;
+
+type TimeRangeKey = typeof TIME_RANGES[number]["key"];
 
 export default function Home() {
-  const [configured, setConfigured] = useState<boolean | null>(null);
-  const [isSetupOpen, setIsSetupOpen] = useState(false);
-  const [isLogsOpen, setIsLogsOpen] = useState(false);
-  const [isBrowseOpen, setIsBrowseOpen] = useState(false);
-  const [assets, setAssets] = useState<Asset[]>([]);
-  const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [favorites, setFavorites] = useState<Set<string>>(new Set());
+  const [activeTab, setActiveTab] = useState<"holdings" | "logs">("holdings");
+  const [selectedRange, setSelectedRange] = useState<TimeRangeKey>("1Y");
 
-  const [lastSync, setLastSync] = useState<Date | null>(null);
+  const [summary, setSummary] = useState<PortfolioSummary | null>(null);
+  const [holdings, setHoldings] = useState<Holding[]>([]);
+  const [trades, setTrades] = useState<Trade[]>([]);
+  const [equityHistory, setEquityHistory] = useState<EquityPoint[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  // Delete Modal State
-  const [deleteTicker, setDeleteTicker] = useState<string | null>(null);
-
-  // Refreshing State (for individual ticker refresh)
-  const [refreshingTicker, setRefreshingTicker] = useState<string | null>(null);
-
-  // Toast notifications
-  const { showToast } = useToast();
-
-  // AI Prediction Panel
-  const [isAIPanelOpen, setIsAIPanelOpen] = useState(false);
-
-  // Model Playground Page
-  const [isPlaygroundOpen, setIsPlaygroundOpen] = useState(false);
-
-  // Prevent duplicate initial fetch
-  const hasFetchedRef = useRef(false);
-
-  // Helper to detect crypto tickers
-  const isCryptoTicker = (ticker: string): boolean => {
-    return ticker.includes("/") || ["BTC", "ETH", "LTC", "SOL", "DOGE"].some(c => ticker.includes(c));
-  };
-
-  // Fetch dashboard data from API
-  const fetchDashboard = useCallback(async () => {
-    if (isLoading) return; // Prevent concurrent fetches
-
-    setIsLoading(true);
-    try {
-      const res = await fetch(`${API_BASE}/dashboard`);
-      if (!res.ok) throw new Error("Failed to fetch dashboard");
-      const data: DashboardItem[] = await res.json();
-
-      // Build favorites set from response
-      const favSet = new Set(data.filter(item => item.is_favorite).map(item => item.ticker));
-      setFavorites(favSet);
-
-      const mappedAssets: Asset[] = data.map((item) => ({
-        ticker: item.ticker,
-        price: item.current_price || 0,
-        prediction: item.prediction || 0,
-        intrinsic: item.intrinsic_value || 0,
-        accuracy: item.accuracy ?? (item.prediction > item.current_price),
-        isCrypto: isCryptoTicker(item.ticker),
-        source: item.source,
-        isFavorite: item.is_favorite !== false,
-      }));
-
-      // Sort: Favorites first, then alphabetical
-      mappedAssets.sort((a, b) => {
-        if (a.isFavorite === b.isFavorite) {
-          return a.ticker.localeCompare(b.ticker);
-        }
-        return a.isFavorite ? -1 : 1;
-      });
-
-      setAssets(mappedAssets);
-    } catch (err) {
-      console.error("Failed to fetch dashboard:", err);
-    } finally {
-      setIsLoading(false);
-    }
-  }, []); // No dependencies - doesn't depend on changing state
-
-  // Sync data from Alpaca (offline-first: only sync when user clicks)
-  const handleSyncData = async () => {
-    setIsSyncing(true);
-    try {
-      const res = await fetch(`${API_BASE}/ingest/all`, { method: "POST" });
-      if (!res.ok) throw new Error("Sync failed");
-      setLastSync(new Date());
-      // Refresh dashboard after sync
-      await fetchDashboard();
-    } catch (err) {
-      console.error("Failed to sync data:", err);
-    } finally {
-      setIsSyncing(false);
-    }
-  };
-
-  // Initial load - only fetch once
   useEffect(() => {
-    if (hasFetchedRef.current) return;
+    const fetchData = async () => {
+      try {
+        // 1. Fetch Status (Summary, Holdings)
+        const statusRes = await fetch(getApiUrl('/paper/status'));
+        if (!statusRes.ok) throw new Error("Failed to fetch status");
+        const statusData = await statusRes.json();
 
-    fetch(`${API_BASE}/status`)
-      .then((res) => res.json())
-      .then((data) => {
-        setConfigured(data.configured);
-        if (data.configured && !hasFetchedRef.current) {
-          hasFetchedRef.current = true;
-          fetchDashboard();
-        }
-      })
-      .catch((err) => console.error("Failed to fetch status", err));
-  }, [fetchDashboard]);
+        setSummary({
+          session_id: statusData.session_id,
+          cash_balance: statusData.cash_balance,
+          equity_value: statusData.equity_value,
+          total_value: statusData.total_value,
+          days_since_rebalance: statusData.days_since_rebalance,
+          daily_pnl: statusData.pnl,
+          daily_pnl_pct: statusData.pnl_pct,
+          sharpe_ratio: statusData.sharpe_ratio,
+          alpha: statusData.alpha
+        });
+        setHoldings(statusData.holdings);
 
-  // Add asset to watchlist and ingest data
-  const handleAddAsset = async (ticker: string, isFavorite: boolean = true) => {
-    showToast(`Adding ${ticker.toUpperCase()} to watchlist...`, "info");
-    try {
-      // 1. Add to watchlist (using new stocks router)
-      const watchlistRes = await fetch(`${API_BASE}/stocks/`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ticker, is_favorite: isFavorite }),
-      });
-
-      if (!watchlistRes.ok) {
-        const err = await watchlistRes.json();
-        showToast(`Failed to add ${ticker}: ${err.detail || "Unknown error"}`, "error");
-        return;
-      }
-
-      showToast(`${ticker.toUpperCase()} added! Fetching data...`, "success");
-
-      // Update favorites set
-      if (isFavorite) {
-        setFavorites(prev => new Set([...prev, ticker.toUpperCase()]));
-      }
-
-      // Refresh dashboard after short delay to allow background ingestion
-      setTimeout(() => fetchDashboard(), 500);
-
-    } catch (err) {
-      console.error("Failed to add asset:", err);
-      showToast("Network error while adding asset.", "error");
-    }
-  };
-
-  // Toggle favorite status
-  const handleToggleFavorite = async (ticker: string, isFavorite: boolean) => {
-    try {
-      const res = await fetch(`${API_BASE}/stocks/${ticker}/favorite`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ is_favorite: isFavorite }),
-      });
-
-      if (!res.ok) throw new Error("Failed to update favorite");
-
-      // Update local state
-      setFavorites(prev => {
-        const next = new Set(prev);
-        if (isFavorite) {
-          next.add(ticker);
+        // 2. Fetch ALL Trades (up to 500 - covers 5 years of weekly rebalancing)
+        const tradesRes = await fetch(getApiUrl('/paper/trades?limit=500'));
+        if (tradesRes.ok) {
+          const tradesData = await tradesRes.json();
+          setTrades(tradesData.trades || []);
         } else {
-          next.delete(ticker);
+          // Fallback to recent_trades from status
+          setTrades(statusData.recent_trades || []);
         }
-        return next;
-      });
 
-      // Update assets state
-      setAssets(prev => prev.map(asset =>
-        asset.ticker === ticker ? { ...asset, isFavorite } : asset
-      ));
+        // 3. Fetch History (Chart)
+        const histRes = await fetch(getApiUrl('/paper/history'));
+        if (histRes.ok) {
+          const histData = await histRes.json();
+          setEquityHistory(histData);
+        }
 
-      showToast(
-        isFavorite
-          ? `${ticker} added to favorites (intrinsic value enabled)`
-          : `${ticker} removed from favorites`,
-        "success"
-      );
-    } catch (err) {
-      console.error("Failed to toggle favorite:", err);
-      showToast("Failed to update favorite status", "error");
-    }
+        setError(null);
+      } catch (e) {
+        console.error("Failed to load dashboard data", e);
+        setError("Connection to backend lost. Retrying...");
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchData();
+    const interval = setInterval(fetchData, 10000); // Poll every 10s
+    return () => clearInterval(interval);
+  }, []);
+
+  // Helper for reason parsing (if simple string, just return)
+  const formatReason = (reason: string) => {
+    if (!reason) return "-";
+    return reason;
   };
 
-  // Remove asset from watchlist
-  const handleConfirmDelete = async (cascade: boolean) => {
-    if (!deleteTicker) return;
+  // Filter equity history based on selected time range
+  const filteredEquityHistory = React.useMemo(() => {
+    if (!equityHistory.length) return [];
 
-    try {
-      const res = await fetch(`${API_BASE}/stocks/${deleteTicker}?cascade=${cascade}`, {
-        method: "DELETE"
-      });
+    const range = TIME_RANGES.find(r => r.key === selectedRange);
+    if (!range) return equityHistory;
 
-      if (!res.ok) throw new Error("Failed to delete");
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - range.days);
 
-      showToast(`${deleteTicker} removed from watchlist`, "success");
-      setDeleteTicker(null);
-      await fetchDashboard();
-    } catch (err) {
-      console.error("Failed to remove asset:", err);
-      showToast("Failed to remove asset", "error");
-    }
-  };
-
-  // Refresh single asset
-  const handleRefresh = async (ticker: string, mode: "daily" | "full" = "full") => {
-    setRefreshingTicker(ticker);
-    showToast(`Refreshing ${ticker} (${mode} sync)...`, "info");
-    try {
-      const res = await fetch(`${API_BASE}/ingest/${ticker}?mode=${mode}`, { method: "POST" });
-      if (!res.ok) throw new Error("Refresh failed");
-
-      showToast(`${ticker} data updated successfully`, "success");
-      // Refresh dashboard to show updated data
-      await fetchDashboard();
-    } catch (err) {
-      console.error(`Failed to refresh ${ticker}:`, err);
-      showToast(`Failed to refresh ${ticker}`, "error");
-    } finally {
-      setRefreshingTicker(null);
-    }
-  };
-
-  if (configured === null) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-black text-white">
-        Loading...
-      </div>
-    );
-  }
+    return equityHistory.filter(point => new Date(point.date) >= cutoffDate);
+  }, [equityHistory, selectedRange]);
 
   return (
-    <div className="flex min-h-screen flex-col bg-black text-zinc-100 font-sans selection:bg-emerald-500/30">
-      {(!configured || isSetupOpen) && (
-        <SetupModal onClose={configured ? () => setIsSetupOpen(false) : undefined} />
-      )}
-
-      {isLogsOpen && (
-        <LogViewer onClose={() => setIsLogsOpen(false)} />
-      )}
-
-      <DeleteConfirmationModal
-        ticker={deleteTicker || ""}
-        isOpen={!!deleteTicker}
-        onClose={() => setDeleteTicker(null)}
-        onConfirm={handleConfirmDelete}
-      />
-
-      <BrowseStocksModal
-        isOpen={isBrowseOpen}
-        onClose={() => setIsBrowseOpen(false)}
-        onAdd={handleAddAsset}
-      />
-
-      <AIPredictionPanel
-        isOpen={isAIPanelOpen}
-        onClose={() => setIsAIPanelOpen(false)}
-      />
-
-      {/* Model Playground Full-Page View */}
-      {isPlaygroundOpen && (
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-zinc-950">
-          <ModelPlayground onBack={() => setIsPlaygroundOpen(false)} />
+    <main className="min-h-screen bg-[#0A0A0F] text-zinc-100 p-6 font-sans relative">
+      {/* Error State Banner */}
+      {error && (
+        <div className="fixed top-20 left-1/2 -translate-x-1/2 bg-red-500/10 border border-red-500/30 rounded-lg px-6 py-3 flex items-center gap-3 shadow-2xl backdrop-blur-md z-50 animate-bounce">
+          <AlertTriangle className="text-red-500" size={20} />
+          <span className="text-sm text-red-100 font-medium">{error}</span>
+          <button
+            onClick={() => window.location.reload()}
+            className="ml-4 px-3 py-1 bg-red-500/20 hover:bg-red-500/30 rounded text-xs transition-colors"
+          >
+            Reload
+          </button>
         </div>
       )}
 
-      <header className="border-b border-zinc-800 bg-zinc-900/50 backdrop-blur-md sticky top-0 z-40">
-        <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
+      {/* Loading Indicator */}
+      {isLoading && !error && (
+        <div className="fixed top-20 right-6 bg-amber-500/10 border border-amber-500/30 rounded-lg px-4 py-3 flex items-center gap-3 shadow-xl backdrop-blur-sm z-50 animate-fade-in">
           <div className="flex items-center gap-2">
-            <div className={`w-3 h-3 rounded-full ${configured ? "bg-emerald-500 animate-pulse" : "bg-red-500"}`} />
-            <h1 className="text-lg font-bold tracking-tight text-white">
-              Stock AI Dashboard
-            </h1>
+            <div className="w-4 h-4 border-2 border-amber-500 border-t-transparent rounded-full animate-spin"></div>
+            <span className="text-sm text-amber-400 font-medium">Loading market data...</span>
           </div>
-          <div className="flex items-center gap-4 text-sm text-zinc-500">
-            {lastSync && (
-              <span className="text-xs text-zinc-600">
-                Last sync: {lastSync.toLocaleTimeString()}
+        </div>
+      )}
+
+      <div className="max-w-7xl mx-auto space-y-6">
+
+        {/* --- Top Section: Equity Chart & Metrics --- */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+          {/* Equity Curve */}
+          <div className="lg:col-span-2 p-6 rounded-2xl bg-[#12121A] border border-white/[0.08] relative overflow-hidden group">
+            <div className="absolute top-0 right-0 p-6 opacity-5 group-hover:opacity-10 transition-opacity">
+              <TrendingUp size={100} />
+            </div>
+
+            <div className="relative z-10 flex flex-col h-[380px]">
+              <div className="flex justify-between items-start mb-6">
+                <div>
+                  <h2 className="text-zinc-400 text-sm font-medium uppercase tracking-wider mb-1">Portfolio Equity</h2>
+                  <div className="flex items-baseline gap-4">
+                    <span className="text-4xl font-display font-bold text-white">
+                      {summary ? `$${summary.total_value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "$-.--"}
+                    </span>
+                    {summary && (
+                      <div className={cn("flex items-center text-sm font-medium px-2 py-1 rounded-full bg-white/5",
+                        (summary.daily_pnl || 0) >= 0 ? "text-emerald-400" : "text-rose-400")}>
+                        {(summary.daily_pnl || 0) >= 0 ? <ArrowUpRight size={16} /> : <ArrowDownRight size={16} />}
+                        {Math.abs(summary.daily_pnl_pct || 0).toFixed(2)}%
+                      </div>
+                    )}
+                  </div>
+                  <p className="text-[10px] text-zinc-600 mt-2 font-mono">
+                    *Historical performance is simulated (Backtest). Future results may vary.
+                  </p>
+                </div>
+
+                {/* Time Range Selector */}
+                <div className="flex items-center gap-1">
+                  {TIME_RANGES.map((range) => (
+                    <button
+                      key={range.key}
+                      onClick={() => setSelectedRange(range.key)}
+                      className={cn(
+                        "px-3 py-1.5 text-xs font-medium rounded-md transition-all",
+                        selectedRange === range.key
+                          ? "bg-amber-500 text-[#0A0A0F] shadow-[0_0_10px_rgba(245,158,11,0.3)]"
+                          : "bg-zinc-800/50 text-zinc-400 hover:bg-zinc-700 hover:text-white border border-zinc-700/50"
+                      )}
+                    >
+                      {range.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex-1 w-full min-h-0">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={filteredEquityHistory}>
+                    <defs>
+                      <linearGradient id="colorEquity" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#818cf8" stopOpacity={0.3} />
+                        <stop offset="95%" stopColor="#818cf8" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#ffffff08" vertical={false} />
+                    <XAxis
+                      dataKey="date"
+                      stroke="#52525b"
+                      fontSize={10}
+                      tickLine={false}
+                      axisLine={false}
+                      minTickGap={40}
+                      tickFormatter={(val) => new Date(val).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                    />
+                    <YAxis
+                      stroke="#52525b"
+                      fontSize={10}
+                      tickLine={false}
+                      axisLine={false}
+                      domain={['auto', 'auto']}
+                      tickFormatter={(val) => `$${val.toLocaleString()}`}
+                      width={60}
+                    />
+                    <RechartsTooltip
+                      contentStyle={{ backgroundColor: '#09090b', borderColor: '#27272a', borderRadius: '8px' }}
+                      itemStyle={{ fontSize: '12px', color: '#818cf8' }}
+                      labelStyle={{ color: '#a1a1aa', fontSize: '11px', marginBottom: '4px' }}
+                      formatter={(value: number) => [`$${value.toLocaleString()}`, "Equity"]}
+                      labelFormatter={(label) => new Date(label).toLocaleDateString()}
+                    />
+                    <Area
+                      type="monotone"
+                      dataKey="value"
+                      stroke="#818cf8"
+                      strokeWidth={2}
+                      fillOpacity={1}
+                      fill="url(#colorEquity)"
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          </div>
+
+          {/* Live Metrics Cards (with SmartTooltips) */}
+          <div className="space-y-4">
+
+            {/* Daily PnL */}
+            <div className="p-5 rounded-xl bg-[#12121A] border border-white/[0.08] flex flex-col justify-center h-[calc(33%-11px)]">
+              <div className="flex items-center gap-2 mb-2">
+                <DollarSign size={16} className="text-emerald-500" />
+                <span className="text-zinc-500 text-xs uppercase tracking-wider font-medium">Total PnL</span>
+                <SmartTooltip
+                  term="Total Profit & Loss"
+                  traderExplanation="Your total profit or loss since the portfolio started."
+                  academicExplanation="Calculated as (Current Total Value - Starting Capital). Updates in real-time as holdings change."
+                >
+                  <Info size={14} className="text-zinc-500 hover:text-amber-400 transition-colors ml-1 cursor-help" />
+                </SmartTooltip>
+              </div>
+              <div className={cn("text-2xl font-mono font-bold", (summary?.daily_pnl || 0) >= 0 ? "text-emerald-400" : "text-rose-400")}>
+                {summary ? `${(summary.daily_pnl || 0) >= 0 ? "+" : ""}$${Math.abs(summary.daily_pnl || 0).toLocaleString()}` : "$-.--"}
+              </div>
+            </div>
+
+            {/* Sharpe Ratio */}
+            <div className="p-5 rounded-xl bg-[#12121A] border border-white/[0.08] flex flex-col justify-center h-[calc(33%-11px)]">
+              <div className="flex items-center gap-2 mb-2">
+                <Unlock size={16} className="text-amber-500" />
+                <span className="text-zinc-500 text-xs uppercase tracking-wider font-medium">Sharpe Ratio (1y)</span>
+                <SmartTooltip
+                  term="Sharpe Ratio"
+                  traderExplanation="Risk-adjusted return metric. Higher is better. Values > 1.0 indicate good performance."
+                  academicExplanation="Sharpe = (Rp - Rf) / σp. Measures excess return per unit of volatility."
+                >
+                  <Info size={14} className="text-zinc-500 hover:text-amber-400 transition-colors ml-1 cursor-help" />
+                </SmartTooltip>
+              </div>
+
+              <div className={cn("text-2xl font-mono font-bold", summary?.sharpe_ratio && summary.sharpe_ratio > 0 ? "text-emerald-400" : "text-zinc-200")}>
+                {summary?.sharpe_ratio !== undefined ? summary.sharpe_ratio.toFixed(2) : "—"} <span className="text-xs font-normal text-zinc-500 ml-1"></span>
+              </div>
+            </div>
+
+            {/* Alpha */}
+            <div className="p-5 rounded-xl bg-[#12121A] border border-white/[0.08] flex flex-col justify-center h-[calc(33%-11px)]">
+              <div className="flex items-center gap-2 mb-2">
+                <Percent size={16} className="text-indigo-500" />
+                <span className="text-zinc-500 text-xs uppercase tracking-wider font-medium">Alpha</span>
+                <SmartTooltip
+                  term="Alpha (α)"
+                  traderExplanation="Excess return vs S&P 500 benchmark. Positive alpha means beating the market."
+                  academicExplanation="Alpha (α) = Rp - [Rf + β(Rm - Rf)]. Active return on investment adjusted for market risk."
+                >
+                  <Info size={14} className="text-zinc-500 hover:text-amber-400 transition-colors ml-1 cursor-help" />
+                </SmartTooltip>
+              </div>
+
+              <div className={cn("text-2xl font-mono font-bold", (summary?.alpha || 0) >= 0 ? "text-indigo-400" : "text-rose-400")}>
+                {summary?.alpha !== undefined ? `${summary.alpha >= 0 ? "+" : ""}${summary.alpha.toFixed(2)}%` : "—"}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* --- Bottom Section: Tabbed Content --- */}
+        <div className="rounded-2xl border border-white/[0.08] bg-[#12121A] overflow-visible min-h-[400px]">
+
+          {/* Tabs */}
+          <div className="px-6 border-b border-white/[0.08] flex items-center gap-6 bg-white/[0.02]">
+            <button
+              onClick={() => setActiveTab("holdings")}
+              className={cn(
+                "py-4 text-sm font-medium border-b-2 transition-colors flex items-center gap-2",
+                activeTab === "holdings" ? "border-amber-500 text-white" : "border-transparent text-zinc-500 hover:text-zinc-300"
+              )}>
+              <Wallet size={16} />
+              Current Holdings
+            </button>
+            <button
+              onClick={() => setActiveTab("logs")}
+              className={cn(
+                "py-4 text-sm font-medium border-b-2 transition-colors flex items-center gap-2",
+                activeTab === "logs" ? "border-amber-500 text-white" : "border-transparent text-zinc-500 hover:text-zinc-300"
+              )}>
+              <FileText size={16} />
+              Trade Logs
+            </button>
+
+            <div className="ml-auto text-xs text-zinc-500 font-mono flex items-center gap-4">
+              <span>Cash: <span className="text-zinc-300 ml-1">${(summary?.cash_balance || 0).toLocaleString()}</span></span>
+              <span className="flex items-center">
+                Exposure: <span className="text-zinc-300 ml-1">${(summary?.equity_value || 0).toLocaleString()}</span>
+                <SmartTooltip
+                  term="Exposure"
+                  traderExplanation="Total market value of all stock holdings, excluding cash."
+                  academicExplanation="Formula: sum of (quantity × current_price) for each position. Does not include cash balance."
+                >
+                  <Info size={14} className="text-zinc-500 hover:text-amber-400 transition-colors ml-1 cursor-help" />
+                </SmartTooltip>
               </span>
+            </div>
+          </div>
+
+          {/* Content */}
+          <div className="overflow-visible">
+
+            {/* HOLDINGS TABLE */}
+            {activeTab === "holdings" && (
+              <table className="w-full text-left text-sm text-zinc-400">
+                <thead className="bg-[#0A0A0F] text-xs uppercase text-zinc-500 font-medium">
+                  <tr>
+                    <th className="px-6 py-4">Ticker</th>
+                    <th className="px-6 py-4 text-right">Qty</th>
+                    <th className="px-6 py-4 text-right">Entry</th>
+                    <th className="px-6 py-4 text-right">Current</th>
+                    <th className="px-6 py-4 text-right">Value</th>
+                    <th className="px-6 py-4 text-right">PnL</th>
+                    <th className="px-6 py-4 text-left pl-8 w-1/3 flex items-center gap-1">
+                      Why?
+                      <SmartTooltip
+                        term="Trade Reasoning"
+                        traderExplanation="Shows V9's AI ranking and correlation data that triggered this buy/sell decision."
+                        academicExplanation="Rank: V9 Transformer relative strength score (0-1). Corr: Average correlation with other holdings. Lower corr = better diversification."
+                      >
+                        <Info size={14} className="text-zinc-500 hover:text-amber-400 transition-colors ml-1 cursor-help" />
+                      </SmartTooltip>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/[0.04]">
+                  {holdings.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="px-6 py-12 text-center text-zinc-600 italic">
+                        No active holdings. Portfolio is 100% Cash.
+                      </td>
+                    </tr>
+                  ) : (
+                    holdings.map((h) => {
+                      // Find last buy trade reasoning if available
+                      const lastBuy = trades.find(t => t.ticker === h.ticker && t.action === "BUY");
+                      const reason = lastBuy ? lastBuy.reason : "Rebalance";
+
+                      return (
+                        <tr key={h.ticker} className="hover:bg-white/[0.02] transition-colors group">
+                          <td className="px-6 py-4 font-bold text-white font-display flex items-center gap-2">
+                            <div className="w-8 h-8 rounded bg-zinc-800 flex items-center justify-center text-xs font-mono">{h.ticker[0]}</div>
+                            {h.ticker}
+                          </td>
+                          <td className="px-6 py-4 text-right font-mono">{h.quantity}</td>
+                          <td className="px-6 py-4 text-right font-mono text-zinc-500">${h.entry_price.toFixed(2)}</td>
+                          <td className="px-6 py-4 text-right font-mono text-white">${h.current_price.toFixed(2)}</td>
+                          <td className="px-6 py-4 text-right font-mono text-zinc-300 font-bold">${h.value.toFixed(2)}</td>
+                          <td className="px-6 py-4 text-right font-mono">
+                            <div className={cn("inline-flex items-center px-1.5 py-0.5 rounded", h.profit_pct >= 0 ? "bg-emerald-500/10 text-emerald-400" : "bg-rose-500/10 text-rose-400")}>
+                              {h.profit_pct >= 0 ? "+" : ""}{h.profit_pct.toFixed(2)}%
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 text-left pl-8 text-xs text-amber-500/80 font-mono">
+                            {reason}
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
             )}
-            <button
-              onClick={() => setIsLogsOpen(true)}
-              className="p-2 rounded-lg bg-zinc-800 border border-zinc-700 hover:bg-zinc-700 hover:border-zinc-600 transition-colors text-zinc-400 hover:text-white"
-              title="System Logs"
-            >
-              <Terminal size={18} />
-            </button>
-            <button
-              onClick={() => setIsAIPanelOpen(true)}
-              className="p-2 rounded-lg bg-purple-500/20 border border-purple-500/30 hover:bg-purple-500/30 hover:border-purple-500/50 transition-colors text-purple-400 hover:text-purple-300"
-              title="AI Model Inspector"
-            >
-              <Brain size={18} />
-            </button>
-            <button
-              onClick={() => setIsPlaygroundOpen(true)}
-              className="p-2 rounded-lg bg-amber-500/20 border border-amber-500/30 hover:bg-amber-500/30 hover:border-amber-500/50 transition-colors text-amber-400 hover:text-amber-300"
-              title="Model Playground"
-            >
-              <FlaskConical size={18} />
-            </button>
-            <button
-              onClick={() => setIsSetupOpen(true)}
-              className="p-2 rounded-lg bg-zinc-800 border border-zinc-700 hover:bg-zinc-700 hover:border-zinc-600 transition-colors text-zinc-400 hover:text-white"
-              title="Settings"
-            >
-              <Settings size={18} />
-            </button>
-            <span className="flex items-center gap-1.5 ml-2">
-              <span className={`w-2 h-2 rounded-full ${configured ? "bg-emerald-500" : "bg-red-500"}`} />
-              <span className={configured ? "text-emerald-500" : "text-red-500"}>
-                {configured ? "Active" : "Setup Required"}
-              </span>
-            </span>
-            <span className="px-2 py-0.5 rounded bg-zinc-800 border border-zinc-700 font-mono text-xs">
-              v1.0.0
-            </span>
+
+            {/* LOGS TABLE */}
+            {activeTab === "logs" && (
+              <table className="w-full text-left text-sm text-zinc-400">
+                <thead className="bg-[#0A0A0F] text-xs uppercase text-zinc-500 font-medium">
+                  <tr>
+                    <th className="px-6 py-4">Date</th>
+                    <th className="px-6 py-4">Ticker</th>
+                    <th className="px-6 py-4">Action</th>
+                    <th className="px-6 py-4 text-right">Price</th>
+                    <th className="px-6 py-4 text-right">Qty</th>
+                    <th className="px-6 py-4">Reason</th>
+                    <th className="px-6 py-4 text-right">Result</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/[0.04]">
+                  {trades.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="px-6 py-12 text-center text-zinc-600 italic">
+                        No trade history available yet.
+                      </td>
+                    </tr>
+                  ) : (
+                    trades.map((t, idx) => (
+                      <tr key={idx} className="hover:bg-white/[0.02] transition-colors">
+                        <td className="px-6 py-4 font-mono text-zinc-500 text-xs text-nowrap">
+                          {new Date(t.date).toLocaleDateString()}
+                        </td>
+                        <td className="px-6 py-4 font-bold text-white font-display">
+                          {t.ticker}
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className={cn("px-2 py-0.5 rounded text-[10px] font-bold border",
+                            t.action === "BUY" ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" : "bg-rose-500/10 text-rose-400 border-rose-500/20")}>
+                            {t.action}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 text-right font-mono">${t.price.toFixed(2)}</td>
+                        <td className="px-6 py-4 text-right font-mono">{t.quantity}</td>
+                        <td className="px-6 py-4 text-xs text-amber-500/80 font-mono max-w-xs truncate" title={t.reason}>
+                          {t.reason}
+                        </td>
+                        <td className="px-6 py-4 text-right font-mono">
+                          {t.profit_loss !== null && t.profit_loss !== undefined ? (
+                            <span className={t.profit_loss >= 0 ? "text-emerald-400" : "text-rose-400"}>
+                              {t.profit_loss >= 0 ? "+" : ""}{t.profit_loss.toFixed(2)}
+                            </span>
+                          ) : "-"}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            )}
+
           </div>
         </div>
-      </header>
 
-      <main className="flex-1 p-6 max-w-7xl mx-auto w-full">
-        <div className="flex flex-col gap-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-2xl font-semibold text-white flex items-center gap-3">
-                Market Overview
-                <span className="text-xs px-2 py-1 bg-amber-500/20 text-amber-400 rounded-full border border-amber-500/30 flex items-center gap-1">
-                  <Star size={12} fill="currentColor" />
-                  {assets.filter(a => a.isFavorite !== false).length} Favorites
-                </span>
-              </h2>
-              <p className="text-zinc-400 text-sm mt-1">
-                {isLoading
-                  ? "Loading data..."
-                  : assets.length === 0
-                    ? "Add assets to your watchlist to begin"
-                    : `Tracking ${assets.length} asset${assets.length !== 1 ? "s" : ""}`}
-              </p>
-            </div>
-            <div className="flex items-center gap-3">
-              <button
-                onClick={() => setIsBrowseOpen(true)}
-                className="p-2 rounded-lg bg-zinc-800 border border-zinc-700 hover:bg-zinc-700 hover:border-zinc-600 transition-colors text-zinc-400 hover:text-white"
-                title="Browse Stocks"
-              >
-                <Grid size={18} />
-              </button>
-              <AddAssetBar onAdd={(ticker) => handleAddAsset(ticker, false)} />
-            </div>
-          </div>
-
-          {assets.length === 0 && !isLoading ? (
-            <div className="flex flex-col items-center justify-center py-20 text-zinc-500">
-              <p className="text-lg mb-2">No assets in watchlist</p>
-              <p className="text-sm mb-4">Add a ticker above or browse popular stocks</p>
-              <button
-                onClick={() => setIsBrowseOpen(true)}
-                className="px-6 py-3 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-medium transition-colors flex items-center gap-2"
-              >
-                <Grid size={18} />
-                Browse Stocks
-              </button>
-            </div>
-          ) : (
-            <AssetTable
-              assets={assets}
-              onSelect={setSelectedAsset}
-              onDelete={setDeleteTicker}
-              onRefresh={handleRefresh}
-              onToggleFavorite={handleToggleFavorite}
-              refreshingTicker={refreshingTicker}
-            />
-          )}
-        </div>
-      </main >
-
-      <DetailDrawer
-        asset={selectedAsset}
-        onClose={() => setSelectedAsset(null)}
-      />
-    </div >
+      </div>
+    </main>
   );
 }

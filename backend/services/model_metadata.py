@@ -24,11 +24,35 @@ class ModelInfo:
     description: str
     reasoning: str
     training_notes: str
+    input_dim: Optional[int] = None
+    window_size: Optional[int] = None
     is_available: bool = False
 
 
 # Model Registry with detailed reasoning
 MODEL_REGISTRY: Dict[str, ModelInfo] = {
+    "v7": ModelInfo(
+        version="v7",
+        filename="lstm_model_v7.pth",
+        display_name="V7 - Attention Model",
+        description="BiLSTM + Multi-Head Attention with DirectionalLoss training",
+        reasoning="""
+        V7 introduces significant architectural improvements:
+        - Bidirectional LSTM (captures forward and backward context)
+        - Multi-Head Temporal Attention (learns which days matter most)
+        - DirectionalLoss (penalizes wrong-sign predictions, not just magnitude)
+        - Weighted sampling on high-volatility days
+        - 41 features including lagged macro indicators
+        
+        Key characteristics:
+        - More defensive/bearish (predicts "down" more often)
+        - Better at vetoing bad trades
+        - Down accuracy ~53% (higher than up accuracy)
+        """,
+        training_notes="Overall acc: 52.6%, Bias: -23.7% (bearish). Trained on 528 stocks, 1.7M samples.",
+        input_dim=41,
+        window_size=60
+    ),
     "v6": ModelInfo(
         version="v6",
         filename="lstm_model_v6.pth",

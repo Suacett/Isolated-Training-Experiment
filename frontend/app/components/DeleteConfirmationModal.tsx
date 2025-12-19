@@ -13,8 +13,8 @@ export default function DeleteConfirmationModal({ ticker, isOpen, onClose, onCon
     if (!isOpen) return null;
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
-            <div className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl overflow-hidden">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0A0A0F]/90 backdrop-blur-sm p-4">
+            <div className="w-full max-w-md bg-[#12121A] border border-white/[0.08] rounded-xl shadow-2xl overflow-hidden animate-scale-in">
                 <div className="p-6">
                     <div className="flex items-center gap-3 mb-4 text-rose-500">
                         <AlertTriangle size={24} />

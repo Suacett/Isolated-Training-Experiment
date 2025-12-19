@@ -4,20 +4,15 @@ This guide explains how to train and use the full 39-feature LSTM model with leg
 
 ## Overview
 
-The model has been upgraded from the initial 5-feature integration to the full 39-feature system from the legacy implementation:
+### Model Hierarchy & Evolution
 
-**39 Features:**
-- **Log Returns (5)**: Yesterday's OHLCV log returns
-- **Moving Averages (5)**: MA10, MA20, MA30, EMA10, EMA30
-- **Time Features (3)**: Day of week, day of month, month number
-- **Technical Indicators (5)**: RSI, MACD, MACD Signal, Bollinger Bands
-- **Volatility (6)**: Multiple time horizons (5d, 10d, 20d, 30d)
-- **Volume Indicators (2)**: OBV, Abnormal Volume
-- **Price Patterns (5)**: Z-Score, overnight gap, momentum, skewness, intraday range
-- **Insider Trading (3)**: Shares, amount, buy/sell flag (from SEC Form 4)
-- **Sentiment (3)**: News sentiment score, article count, sentiment change
+The system maintains multiple models for different trading strategies:
 
-**4 Prediction Horizons:**
+1.  **V9 (Transformer-Rank)**: **PRIMARY / STATE OF THE ART**. Uses a Transformer architecture to predict relative performance across the S&P 500. Best for long/short portfolio construction.
+2.  **V7 (BiLSTM-Attention)**: **STABLE / DIRECTIONAL**. Uses temporal attention to predict price targets with high directional accuracy. Best for individual stock entry/exit timing.
+3.  **V6-V2 (Legacy LSTM)**: Baseline models primarily used for regression testing and comparative analysis.
+
+**4 Prediction Horizons (V7 & Legacy):**
 - `Target_1d`: 1 day ahead
 - `Target_1w`: 5 days (1 week) ahead
 - `Target_1m`: 21 days (1 month) ahead
@@ -37,9 +32,35 @@ docker compose exec backend pip install -r requirements.txt
 
 ### Step 2: Run Training
 
+**V9 Training (STATE OF THE ART):**
 ```bash
-# From project root
-python backend/scripts/train_model.py
+# 1. Fetch Full S&P 500 Data (Required for Ranking)
+docker exec proxmox_stock_backend python -m scripts.fetch_training_data --sp500
+
+# 2. Train Transformer Model (Uses Sliding Window + Lazy Loading)
+docker exec proxmox_stock_backend python -m scripts.train_model_v9
+
+# 3. Backtest the Ranking Strategy
+docker exec proxmox_stock_backend python -m scripts.backtest_v9_portfolio
+```
+
+**V7 Training (Stable):**
+```bash
+# Fetch training data (59 tickers: indices, sectors, top stocks)
+docker exec proxmox_stock_backend python -m scripts.fetch_training_data
+
+# Train V7 model (BiLSTM + Attention, ~2 hours)
+docker exec proxmox_stock_backend python -m scripts.train_model_v7
+
+# Activate V7 as production model
+docker exec proxmox_stock_backend cp /app/models/lstm_model_v7.pth /app/models/lstm_model_v2.pth
+docker exec proxmox_stock_backend cp /app/models/scaler_v7.pkl /app/models/scaler_v2.pkl
+docker compose restart backend
+```
+
+**Legacy V6 Training:**
+```bash
+docker exec proxmox_stock_backend python -m scripts.train_model_v6
 ```
 
 This will:
@@ -72,6 +93,9 @@ Look for:
 - "Training Complete!"
 - Final validation loss
 - Model saved confirmation
+
+### Production Selection
+By default, `bootstrap.py` auto-resolves the highest versioned model found in `/app/models`. If `transformer_v9.pth` and `scaler_v9.pkl` exist, the system boots in **V9 (Ranking) mode**. If only V7 files exist, it uses **V7 (Directional) mode**.
 
 ## Using the Trained Model
 
@@ -296,9 +320,19 @@ const predictions = await fetch(`/api/predictions/${ticker}`).then(r => r.json()
 ### Issue: "SEC EDGAR rate limiting"
 **Solution:** Insider data collection is slow (SEC rate limits). Cache results in database.
 
-### Issue: "Alpha Vantage API limit"
-**Solution:** Free tier allows 5 calls/minute. Sentiment collection sleeps 12s between requests.
 
+## Accuracy Benchmarks
+
+| Model | Training | SPY Accuracy | Bias | Notes |
+|-------|----------|--------------|------|-------|
+| Model | Training | Accuracy/IC | Notes |
+|-------|----------|-------------|-------|
+| **V9** | S&P 500, Transformer | **IC ~0.09** | **Rank Prediction** | Best for portfolio selection |
+| **V7** | 59 tickers, BiLSTM | **52.6% Acc** | -23.7% Bias | Directional prediction |
+| V6 | All stocks, clean data | 54.0% Acc | +8% Bias | Baseline |
+| V3 | 100 stocks | ~54% | N/A | Legacy |
+
+**Note:** V7 is more defensive/bearish - better at vetoing bad trades.
 ## Performance Notes
 
 **Training Time:**
